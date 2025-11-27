@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     openai_api_key: Optional[str] = None
     cors_origins: str = "http://localhost:3000"
     llm_provider: str = "openai"  # Options: "anthropic", "openai"
-    storage_type: str = "memory"
+    storage_type: str = "sqlite"  # Options: "memory", "sqlite"
 
     class Config:
         env_file = ".env"

@@ -1,5 +1,5 @@
 """Data Transfer Objects for application layer."""
-from typing import List
+from typing import List, Optional
 from uuid import UUID
 from pydantic import BaseModel, Field
 from datetime import datetime
@@ -29,6 +29,21 @@ class SendMessageResponse(BaseModel):
 class ConversationResponse(BaseModel):
     """Response representing a conversation."""
     id: UUID
+    title: Optional[str] = None
     messages: List[MessageResponse]
     created_at: datetime
     updated_at: datetime
+
+
+class ConversationSummary(BaseModel):
+    """Summary of a conversation for listing."""
+    id: UUID
+    title: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    message_count: int
+
+
+class ConversationListResponse(BaseModel):
+    """Response containing list of conversations."""
+    conversations: List[ConversationSummary]

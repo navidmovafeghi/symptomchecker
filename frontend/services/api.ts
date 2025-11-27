@@ -6,6 +6,7 @@ import {
   SendMessageRequest,
   SendMessageResponse,
   Conversation,
+  ConversationListResponse,
 } from '@/types';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
@@ -163,6 +164,20 @@ class ApiService {
       const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
       throw new Error(error.detail || 'Failed to delete conversation');
     }
+  }
+
+  /**
+   * List all conversations.
+   */
+  async listConversations(): Promise<ConversationListResponse> {
+    const response = await fetch(`${this.baseUrl}/api/chat/conversations`);
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      throw new Error(error.detail || 'Failed to list conversations');
+    }
+
+    return response.json();
   }
 }
 

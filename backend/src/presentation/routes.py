@@ -2,17 +2,24 @@
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
-from ..application.dtos import SendMessageRequest, SendMessageResponse, ConversationResponse
+from ..application.dtos import (
+    SendMessageRequest,
+    SendMessageResponse,
+    ConversationResponse,
+    ConversationListResponse
+)
 from ..application.use_cases import (
     SendMessageUseCase,
     GetConversationHistoryUseCase,
-    DeleteConversationUseCase
+    DeleteConversationUseCase,
+    ListConversationsUseCase
 )
 from ..domain.exceptions import ConversationNotFoundException, InvalidMessageException
 from .dependencies import (
     get_send_message_use_case,
     get_conversation_history_use_case,
-    get_delete_conversation_use_case
+    get_delete_conversation_use_case,
+    get_list_conversations_use_case
 )
 
 
@@ -76,6 +83,17 @@ async def resume_conversation(
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Resume error: {str(e)}")
+
+
+@router.get("/conversations", response_model=ConversationListResponse)
+async def list_conversations(
+    use_case: ListConversationsUseCase = Depends(get_list_conversations_use_case)
+):
+    """List all conversations."""
+    try:
+        return await use_case.execute()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
 
 
 @router.get("/conversations/{conversation_id}", response_model=ConversationResponse)

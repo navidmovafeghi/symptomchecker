@@ -4,7 +4,7 @@
  */
 
 import { create } from 'zustand';
-import { Message } from '@/types';
+import { Message, ConversationSummary } from '@/types';
 import { apiService } from '@/services/api';
 
 interface ChatState {
@@ -15,6 +15,10 @@ interface ChatState {
   error: string | null;
   isStreaming: boolean;
   currentStreamingMessage: string;
+
+  // Conversation list state
+  conversations: ConversationSummary[];
+  isLoadingConversations: boolean;
 
   // Interrupt state (for LangGraph clarifications)
   isWaitingForInput: boolean;
@@ -28,6 +32,12 @@ interface ChatState {
   selectOption: (option: string) => Promise<void>;
   clearConversation: () => void;
   setError: (error: string | null) => void;
+  
+  // Conversation list actions
+  loadConversations: () => Promise<void>;
+  selectConversation: (conversationId: string) => Promise<void>;
+  newConversation: () => void;
+  deleteConversation: (conversationId: string) => Promise<void>;
 }
 
 export const useChatViewModel = create<ChatState>((set, get) => ({
@@ -38,6 +48,10 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
   error: null,
   isStreaming: false,
   currentStreamingMessage: '',
+
+  // Conversation list state
+  conversations: [],
+  isLoadingConversations: false,
 
   // Interrupt state
   isWaitingForInput: false,
@@ -163,6 +177,8 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
       set({ messages: messages.filter((m) => !m.id.startsWith('temp-')) });
     } finally {
       set({ isLoading: false, isStreaming: false });
+      // Refresh conversation list to show new/updated conversation
+      get().loadConversations();
     }
   },
 
@@ -324,5 +340,76 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
   // Set error action
   setError: (error: string | null) => {
     set({ error });
+  },
+
+  // Load all conversations
+  loadConversations: async () => {
+    set({ isLoadingConversations: true });
+    try {
+      const response = await apiService.listConversations();
+      set({ conversations: response.conversations, isLoadingConversations: false });
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to load conversations';
+      set({ error: errorMessage, isLoadingConversations: false });
+    }
+  },
+
+  // Select and load a conversation
+  selectConversation: async (conversationId: string) => {
+    set({ isLoading: true, error: null });
+    try {
+      const conversation = await apiService.getConversation(conversationId);
+      set({
+        conversationId: conversation.id,
+        messages: conversation.messages.map((msg) => ({
+          ...msg,
+          id: msg.id.toString(),
+        })),
+        isLoading: false,
+        isWaitingForInput: false,
+        pendingQuestion: null,
+        pendingOptions: [],
+        threadId: conversationId, // Use conversation ID as thread ID
+      });
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to load conversation';
+      set({ error: errorMessage, isLoading: false });
+    }
+  },
+
+  // Start a new conversation
+  newConversation: () => {
+    set({
+      messages: [],
+      conversationId: null,
+      error: null,
+      currentStreamingMessage: '',
+      isWaitingForInput: false,
+      pendingQuestion: null,
+      pendingOptions: [],
+      threadId: null,
+    });
+  },
+
+  // Delete a conversation
+  deleteConversation: async (conversationId: string) => {
+    try {
+      await apiService.deleteConversation(conversationId);
+      const { conversations, conversationId: currentId } = get();
+      set({
+        conversations: conversations.filter((c) => c.id !== conversationId),
+      });
+      // If we deleted the current conversation, clear it
+      if (currentId === conversationId) {
+        set({
+          messages: [],
+          conversationId: null,
+          threadId: null,
+        });
+      }
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to delete conversation';
+      set({ error: errorMessage });
+    }
   },
 }));

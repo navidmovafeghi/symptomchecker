@@ -1,11 +1,12 @@
 /**
- * ChatPage Component - Centered chat interface with inline question options.
+ * ChatPage Component - Chat interface with sidebar for conversation history.
  */
 
 'use client';
 
 import { useState, useEffect, useRef, KeyboardEvent } from 'react';
 import { useChatViewModel } from '@/viewmodels/useChatViewModel';
+import { Sidebar } from './Sidebar';
 import ReactMarkdown from 'react-markdown';
 
 export function ChatPage() {
@@ -16,7 +17,7 @@ export function ChatPage() {
     error,
     sendMessage,
     selectOption,
-    clearConversation,
+    newConversation,
     isWaitingForInput,
     pendingOptions,
   } = useChatViewModel();
@@ -50,9 +51,14 @@ export function ChatPage() {
   };
 
   return (
-    <div className="flex items-center justify-center min-h-screen w-screen bg-gray-100 p-4">
-      {/* Middle div (flex container) */}
-      <div className="flex flex-col h-[calc(100vh-2rem)] w-full max-w-2xl bg-white shadow-lg rounded-2xl overflow-hidden">
+    <div className="flex min-h-screen w-screen bg-gray-100">
+      {/* Sidebar */}
+      <Sidebar />
+
+      {/* Main chat area */}
+      <div className="flex-1 flex items-center justify-center p-4">
+        {/* Chat container */}
+        <div className="flex flex-col h-[calc(100vh-2rem)] w-full max-w-2xl bg-white shadow-lg rounded-2xl overflow-hidden">
         {/* Error Banner */}
         {error && (
           <div className="bg-red-50 border-b border-red-200 px-4 py-3">
@@ -165,13 +171,14 @@ export function ChatPage() {
           </button>
           {messages.length > 0 && (
             <button
-              onClick={clearConversation}
+              onClick={newConversation}
               className="text-xs text-gray-500 hover:text-gray-700"
             >
               Clear
             </button>
           )}
         </div>
+      </div>
       </div>
     </div>
   );

@@ -9,11 +9,12 @@ class ILLMProvider(ABC):
     """Interface for LLM providers (swappable)."""
 
     @abstractmethod
-    async def generate_response(self, messages: List[dict]) -> str:
+    async def generate_response(self, messages: List[dict], thread_id: Optional[str] = None) -> str:
         """Generate a response from the LLM.
 
         Args:
             messages: List of message dicts with 'role' and 'content'
+            thread_id: Optional thread ID for state persistence
 
         Returns:
             Generated response content
@@ -22,12 +23,13 @@ class ILLMProvider(ABC):
 
     @abstractmethod
     def generate_response_stream(
-        self, messages: List[dict]
+        self, messages: List[dict], thread_id: Optional[str] = None
     ) -> AsyncIterator[str]:
         """Generate a streaming response from the LLM.
 
         Args:
             messages: List of message dicts with 'role' and 'content'
+            thread_id: Optional thread ID for state persistence
 
         Yields:
             Response chunks

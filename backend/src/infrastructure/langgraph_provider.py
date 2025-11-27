@@ -622,12 +622,12 @@ Tone: Be emotionally supportive, personalized, friendly but professional. Use si
     # ILLMProvider Interface Implementation
     # ========================================================================
 
-    async def generate_response(self, messages: List[dict]) -> str:
+    async def generate_response(self, messages: List[dict], thread_id: Optional[str] = None) -> str:
         """Generate a non-streaming response (not typically used with interrupts)."""
         raise NotImplementedError("Use generate_response_stream for LangGraph medical provider")
 
     async def generate_response_stream(
-        self, messages: List[dict]
+        self, messages: List[dict], thread_id: Optional[str] = None
     ) -> AsyncIterator[str]:
         """Generate streaming response with interrupt handling.
 
@@ -641,8 +641,9 @@ Tone: Be emotionally supportive, personalized, friendly but professional. Use si
             elif msg["role"] == "assistant":
                 lc_messages.append(AIMessage(content=msg["content"]))
 
-        # Generate thread ID for this conversation
-        thread_id = str(uuid.uuid4())
+        # Use provided thread_id or generate new one
+        if thread_id is None:
+            thread_id = str(uuid.uuid4())
         config = {"configurable": {"thread_id": thread_id}}
 
         try:

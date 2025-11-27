@@ -10,6 +10,8 @@ from .dtos import (
     SendMessageRequest,
     SendMessageResponse,
     ConversationResponse,
+    ConversationListResponse,
+    ConversationSummary,
     MessageResponse
 )
 
@@ -101,14 +103,19 @@ class SendMessageUseCase:
         # Create user message
         user_message = Message(role="user", content=request.message)
         conversation = conversation.add_message(user_message)
+        
+        # Save conversation immediately to persist the user message
+        # This also ensures we have a conversation_id for new conversations
+        await self.conversation_repository.save(conversation)
 
-        # Generate AI response (streaming)
+        # Generate AI response (streaming) - use conversation ID as thread_id
         messages_for_llm = conversation.get_messages_for_llm()
+        thread_id = conversation.get_thread_id()
 
         # Collect chunks for final storage
         full_response = ""
         async for chunk in self.llm_provider.generate_response_stream(
-            messages_for_llm
+            messages_for_llm, thread_id=thread_id
         ):
             full_response += chunk
             yield chunk
@@ -119,7 +126,7 @@ class SendMessageUseCase:
         )
         conversation = conversation.add_message(assistant_message)
 
-        # Save conversation
+        # Save conversation with assistant response
         await self.conversation_repository.save(conversation)
 
 
@@ -142,6 +149,7 @@ class GetConversationHistoryUseCase:
 
         return ConversationResponse(
             id=conversation.id,
+            title=conversation.title,
             messages=[
                 MessageResponse(
                     id=msg.id,
@@ -165,3 +173,27 @@ class DeleteConversationUseCase:
     async def execute(self, conversation_id: UUID) -> bool:
         """Execute the use case."""
         return await self.conversation_repository.delete(conversation_id)
+
+
+class ListConversationsUseCase:
+    """Use case for listing all conversations."""
+
+    def __init__(self, conversation_repository: IConversationRepository):
+        self.conversation_repository = conversation_repository
+
+    async def execute(self) -> ConversationListResponse:
+        """Execute the use case."""
+        conversations = await self.conversation_repository.list_all()
+        
+        return ConversationListResponse(
+            conversations=[
+                ConversationSummary(
+                    id=conv.id,
+                    title=conv.title,
+                    created_at=conv.created_at,
+                    updated_at=conv.updated_at,
+                    message_count=len(conv.messages)
+                )
+                for conv in conversations
+            ]
+        )

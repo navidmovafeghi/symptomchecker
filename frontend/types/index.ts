@@ -17,6 +17,7 @@ export interface Message {
 
 export interface Conversation {
   id: string;
+  title?: string;
   messages: Message[];
   created_at: string;
   updated_at: string;
@@ -45,4 +46,18 @@ export interface InterruptResponse {
 export interface CompleteResponse {
   type: 'complete';
   content: string;
+}
+
+/** Summary of a conversation for listing in sidebar */
+export interface ConversationSummary {
+  id: string;
+  title?: string;
+  created_at: string;
+  updated_at: string;
+  message_count: number;
+}
+
+/** Response containing list of conversations */
+export interface ConversationListResponse {
+  conversations: ConversationSummary[];
 }

@@ -1,5 +1,5 @@
 """LLM provider implementations - swappable adapters."""
-from typing import List, AsyncIterator
+from typing import List, AsyncIterator, Optional
 from anthropic import Anthropic, AsyncAnthropic
 from ..domain.interfaces import ILLMProvider
 from ..domain.exceptions import LLMProviderException
@@ -12,7 +12,7 @@ class AnthropicLLMProvider(ILLMProvider):
         self.client = AsyncAnthropic(api_key=api_key)
         self.model = model
 
-    async def generate_response(self, messages: List[dict]) -> str:
+    async def generate_response(self, messages: List[dict], thread_id: Optional[str] = None) -> str:
         """Generate a response from Claude."""
         try:
             response = await self.client.messages.create(
@@ -25,7 +25,7 @@ class AnthropicLLMProvider(ILLMProvider):
             raise LLMProviderException(f"Anthropic API error: {str(e)}")
 
     async def generate_response_stream(
-        self, messages: List[dict]
+        self, messages: List[dict], thread_id: Optional[str] = None
     ) -> AsyncIterator[str]:
         """Generate a streaming response from Claude."""
         try:

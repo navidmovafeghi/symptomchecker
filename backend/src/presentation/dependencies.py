@@ -2,18 +2,26 @@
 from functools import lru_cache
 from ..infrastructure.llm_providers import AnthropicLLMProvider
 from ..infrastructure.langgraph_provider import LangGraphMedicalProvider
-from ..infrastructure.medical_chatbot_provider import MedicalChatbotProvider  # NEW: Enhanced medical chatbot
-from ..infrastructure.repositories import InMemoryConversationRepository
+from ..infrastructure.medical_chatbot_provider import MedicalChatbotProvider
+from ..infrastructure.repositories import InMemoryConversationRepository, SQLiteConversationRepository
 from ..application.use_cases import (
     SendMessageUseCase,
     GetConversationHistoryUseCase,
-    DeleteConversationUseCase
+    DeleteConversationUseCase,
+    ListConversationsUseCase
 )
 from .config import settings
 
 
-# Singleton instances (in-memory storage persists across requests)
-_conversation_repository = InMemoryConversationRepository()
+# Repository selection based on config
+def _create_conversation_repository():
+    """Factory function to create the appropriate repository."""
+    if settings.storage_type == "sqlite":
+        return SQLiteConversationRepository(db_path="conversations.db")
+    return InMemoryConversationRepository()
+
+_conversation_repository = _create_conversation_repository()
+
 
 # LLM Provider selection based on config
 def _create_llm_provider():
@@ -35,14 +43,12 @@ _llm_provider = _create_llm_provider()
 @lru_cache
 def get_llm_provider():
     """Get LLM provider instance (swappable via config)."""
-    # Future: Factory pattern to select provider based on settings.llm_provider
     return _llm_provider
 
 
 @lru_cache
 def get_conversation_repository():
     """Get conversation repository instance (swappable via config)."""
-    # Future: Factory pattern to select repository based on settings.storage_type
     return _conversation_repository
 
 
@@ -64,5 +70,12 @@ def get_conversation_history_use_case() -> GetConversationHistoryUseCase:
 def get_delete_conversation_use_case() -> DeleteConversationUseCase:
     """Get DeleteConversationUseCase instance."""
     return DeleteConversationUseCase(
+        conversation_repository=get_conversation_repository()
+    )
+
+
+def get_list_conversations_use_case() -> ListConversationsUseCase:
+    """Get ListConversationsUseCase instance."""
+    return ListConversationsUseCase(
         conversation_repository=get_conversation_repository()
     )
