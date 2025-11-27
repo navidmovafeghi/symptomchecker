@@ -1,0 +1,68 @@
+"""Dependency injection container."""
+from functools import lru_cache
+from ..infrastructure.llm_providers import AnthropicLLMProvider
+from ..infrastructure.langgraph_provider import LangGraphMedicalProvider
+from ..infrastructure.medical_chatbot_provider import MedicalChatbotProvider  # NEW: Enhanced medical chatbot
+from ..infrastructure.repositories import InMemoryConversationRepository
+from ..application.use_cases import (
+    SendMessageUseCase,
+    GetConversationHistoryUseCase,
+    DeleteConversationUseCase
+)
+from .config import settings
+
+
+# Singleton instances (in-memory storage persists across requests)
+_conversation_repository = InMemoryConversationRepository()
+
+# LLM Provider selection based on config
+def _create_llm_provider():
+    """Factory function to create the appropriate LLM provider."""
+    if settings.llm_provider == "openai":
+        if not settings.openai_api_key:
+            raise ValueError("OPENAI_API_KEY is required when llm_provider is 'openai'")
+        return MedicalChatbotProvider(api_key=settings.openai_api_key)
+    elif settings.llm_provider == "anthropic":
+        if not settings.anthropic_api_key:
+            raise ValueError("ANTHROPIC_API_KEY is required when llm_provider is 'anthropic'")
+        return LangGraphMedicalProvider(api_key=settings.anthropic_api_key)
+    else:
+        raise ValueError(f"Unknown llm_provider: {settings.llm_provider}")
+
+_llm_provider = _create_llm_provider()
+
+
+@lru_cache
+def get_llm_provider():
+    """Get LLM provider instance (swappable via config)."""
+    # Future: Factory pattern to select provider based on settings.llm_provider
+    return _llm_provider
+
+
+@lru_cache
+def get_conversation_repository():
+    """Get conversation repository instance (swappable via config)."""
+    # Future: Factory pattern to select repository based on settings.storage_type
+    return _conversation_repository
+
+
+def get_send_message_use_case() -> SendMessageUseCase:
+    """Get SendMessageUseCase instance."""
+    return SendMessageUseCase(
+        llm_provider=get_llm_provider(),
+        conversation_repository=get_conversation_repository()
+    )
+
+
+def get_conversation_history_use_case() -> GetConversationHistoryUseCase:
+    """Get GetConversationHistoryUseCase instance."""
+    return GetConversationHistoryUseCase(
+        conversation_repository=get_conversation_repository()
+    )
+
+
+def get_delete_conversation_use_case() -> DeleteConversationUseCase:
+    """Get DeleteConversationUseCase instance."""
+    return DeleteConversationUseCase(
+        conversation_repository=get_conversation_repository()
+    )
