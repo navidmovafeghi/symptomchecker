@@ -5,10 +5,9 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     """Application settings loaded from environment."""
-    anthropic_api_key: Optional[str] = None
     openai_api_key: Optional[str] = None
     cors_origins: str = "http://localhost:3000"
-    llm_provider: str = "openai"  # Options: "anthropic", "openai"
+    llm_provider: str = "openai"  # Only 'openai' is supported
     storage_type: str = "sqlite"  # Options: "memory", "sqlite"
 
     class Config:

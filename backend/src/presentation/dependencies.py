@@ -1,7 +1,5 @@
 """Dependency injection container."""
 from functools import lru_cache
-from ..infrastructure.llm_providers import AnthropicLLMProvider
-from ..infrastructure.langgraph_provider import LangGraphMedicalProvider
 from ..infrastructure.medical_chatbot_provider import MedicalChatbotProvider
 from ..infrastructure.repositories import InMemoryConversationRepository, SQLiteConversationRepository
 from ..application.use_cases import (
@@ -31,12 +29,8 @@ def _create_llm_provider():
         if not settings.openai_api_key:
             raise ValueError("OPENAI_API_KEY is required when llm_provider is 'openai'")
         return MedicalChatbotProvider(api_key=settings.openai_api_key)
-    elif settings.llm_provider == "anthropic":
-        if not settings.anthropic_api_key:
-            raise ValueError("ANTHROPIC_API_KEY is required when llm_provider is 'anthropic'")
-        return LangGraphMedicalProvider(api_key=settings.anthropic_api_key)
     else:
-        raise ValueError(f"Unknown llm_provider: {settings.llm_provider}")
+        raise ValueError(f"Unknown llm_provider: {settings.llm_provider}. Only 'openai' is supported.")
 
 _llm_provider = _create_llm_provider()
 

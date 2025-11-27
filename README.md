@@ -1,35 +1,35 @@
-# Chatbot Application
+# Medical Chatbot Application
 
-A full-stack chatbot application built with layered architecture and MVVM pattern.
+A full-stack medical triage chatbot built with clean architecture principles. Features an intelligent LangGraph-powered workflow with human-in-the-loop interrupts for gathering patient information.
+
+## Features
+
+- **Medical Triage Workflow**: Intent detection, symptom gathering, urgency classification
+- **Human-in-the-Loop**: Interactive clarification questions with selectable options
+- **Real-time Streaming**: Live response streaming for better UX
+- **Conversation Persistence**: SQLite storage for chat history and workflow state
+- **Clean Architecture**: Swappable components with dependency injection
+- **Multiple Conversations**: Sidebar with conversation history
 
 ## Architecture
 
-### Backend (Python)
-**Layered Architecture** with 4 layers:
-- **Domain**: Business entities and interfaces
-- **Application**: Use cases and DTOs
-- **Infrastructure**: Swappable implementations (LLM, storage)
-- **Presentation**: FastAPI routes
+### Backend (Python/FastAPI)
+- **Domain Layer**: Entities, interfaces, business rules
+- **Application Layer**: Use cases, DTOs
+- **Infrastructure Layer**: LLM provider (OpenAI/LangGraph), repositories (SQLite)
+- **Presentation Layer**: FastAPI routes, dependency injection
 
-**Key Features**:
-- Swappable LLM providers (currently Anthropic Claude)
-- Swappable storage (currently in-memory)
-- SOLID principles applied pragmatically
-- Streaming responses support
-
-### Frontend (Next.js)
-**MVVM Pattern**:
-- **Model**: Types and data structures
-- **ViewModel**: Zustand state management
-- **View**: React components
-- **Service**: API communication
-
-**Tech Stack**:
-- Next.js 15 with TypeScript
-- Tailwind CSS
-- Zustand for state management
+### Frontend (Next.js/TypeScript)
+- **MVVM Pattern**: Views, ViewModels (Zustand), Services
+- **React 19** with TypeScript
+- **Tailwind CSS** for styling
 
 ## Quick Start
+
+### Prerequisites
+- Python 3.11+
+- Node.js 18+
+- OpenAI API key
 
 ### 1. Backend Setup
 
@@ -45,13 +45,14 @@ pip install -r requirements.txt
 
 # Configure environment
 cp .env.example .env
-# Edit .env and add your ANTHROPIC_API_KEY
+# Edit .env and add your OPENAI_API_KEY
 
 # Run server
 python main.py
 ```
 
-Backend will run at: http://localhost:8000
+Backend runs at: http://localhost:8000  
+API docs: http://localhost:8000/docs
 
 ### 2. Frontend Setup
 
@@ -61,101 +62,121 @@ cd frontend
 # Install dependencies
 npm install
 
-# Configure environment
+# Configure environment (optional - defaults work)
 cp .env.local.example .env.local
-# Edit .env.local if needed (default: http://localhost:8000)
 
 # Run dev server
 npm run dev
 ```
 
-Frontend will run at: http://localhost:3000
+Frontend runs at: http://localhost:3000
 
 ## Project Structure
 
 ```
-chatbot-project/
 ├── backend/
 │   ├── src/
-│   │   ├── domain/              # Business logic & interfaces
-│   │   │   ├── entities.py      # Message, Conversation
-│   │   │   ├── interfaces.py    # ILLMProvider, IRepository
+│   │   ├── domain/                 # Business logic
+│   │   │   ├── entities.py         # Message, Conversation
+│   │   │   ├── interfaces.py       # ILLMProvider, IConversationRepository
 │   │   │   └── exceptions.py
-│   │   ├── application/         # Use cases
-│   │   │   ├── use_cases.py     # SendMessage, GetHistory
-│   │   │   └── dtos.py
-│   │   ├── infrastructure/      # Implementations
-│   │   │   ├── llm_providers.py # AnthropicLLMProvider
-│   │   │   └── repositories.py  # InMemoryRepository
-│   │   └── presentation/        # API
-│   │       ├── app.py           # FastAPI app
-│   │       ├── routes.py        # Endpoints
-│   │       └── dependencies.py  # DI container
-│   └── main.py
+│   │   ├── application/            # Use cases
+│   │   │   ├── use_cases.py        # SendMessage, Resume, List, Delete
+│   │   │   └── dtos.py             # Request/Response objects
+│   │   ├── infrastructure/         # Implementations
+│   │   │   ├── medical_chatbot_provider.py  # OpenAI + LangGraph
+│   │   │   └── repositories.py     # SQLite, InMemory
+│   │   └── presentation/           # API layer
+│   │       ├── routes.py           # FastAPI endpoints
+│   │       ├── dependencies.py     # DI container
+│   │       └── config.py           # Settings
+│   ├── main.py
+│   ├── checkpoints.db              # LangGraph workflow state
+│   └── conversations.db            # Chat history (when using SQLite)
 │
-└── frontend/
-    ├── app/                     # Next.js pages
-    ├── presentation/            # View components
-    ├── viewmodels/              # Business logic
-    ├── services/                # API layer
-    └── types/                   # TypeScript types
+├── frontend/
+│   ├── app/                        # Next.js pages
+│   ├── presentation/               # React components
+│   │   ├── ChatPage.tsx
+│   │   └── Sidebar.tsx
+│   ├── viewmodels/                 # Zustand state management
+│   │   └── useChatViewModel.ts
+│   ├── services/                   # API communication
+│   │   └── api.ts
+│   └── types/                      # TypeScript types
+│       └── index.ts
+│
+├── DATA_PERSISTENCE.md             # How data storage works
+├── ARCHITECTURE.md                 # Detailed architecture docs
+└── SETUP.md                        # Extended setup guide
 ```
 
 ## API Endpoints
 
-- `POST /api/chat/message` - Send message (non-streaming)
-- `POST /api/chat/message/stream` - Send message (streaming)
-- `GET /api/chat/conversations/{id}` - Get conversation
-- `DELETE /api/chat/conversations/{id}` - Delete conversation
-- `GET /health` - Health check
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/chat/message` | Send message (non-streaming) |
+| POST | `/api/chat/message/stream` | Send message (streaming) |
+| POST | `/api/chat/resume` | Resume interrupted conversation |
+| GET | `/api/chat/conversations` | List all conversations |
+| GET | `/api/chat/conversations/{id}` | Get conversation history |
+| DELETE | `/api/chat/conversations/{id}` | Delete conversation |
 
-## Swapping Components
+## Configuration
 
-### Change LLM Provider
+### Environment Variables (backend/.env)
 
-1. Create new provider in `backend/src/infrastructure/llm_providers.py`:
-```python
-class LangGraphProvider(ILLMProvider):
-    async def generate_response(self, messages):
-        # Your implementation
-        pass
+```bash
+OPENAI_API_KEY=your_key_here      # Required
+LLM_PROVIDER=openai               # Only 'openai' supported
+STORAGE_TYPE=sqlite               # 'sqlite' or 'memory'
+CORS_ORIGINS=http://localhost:3000
 ```
 
-2. Update dependency injection in `backend/src/presentation/dependencies.py`
+### Storage Options
 
-### Change Storage
+| Type | Database | Persistence | Use Case |
+|------|----------|-------------|----------|
+| `sqlite` | `conversations.db` | Yes | Production |
+| `memory` | In-memory dict | No | Development/Testing |
 
-1. Create new repository in `backend/src/infrastructure/repositories.py`:
-```python
-class PostgresConversationRepository(IConversationRepository):
-    async def save(self, conversation):
-        # Your implementation
-        pass
+## Medical Triage Workflow
+
+The chatbot uses a LangGraph state machine:
+
+1. **Intent Detection**: Classifies user intent (symptom_checking, non_medical, other_medical, ambiguous)
+2. **Clarification**: If ambiguous, asks clarifying questions with options
+3. **Symptom Gathering**: Multi-turn conversation to collect symptom details
+4. **Evaluation**: Determines if enough info for triage
+5. **Final Response**: Provides guidance based on gathered information
+
+```
+User Message → Intent Detection → [Clarification Loop] → Symptom Checking → [Info Gathering Loop] → Final Answer
 ```
 
-2. Update dependency injection in `backend/src/presentation/dependencies.py`
+## Extending the Application
 
-## Features
+### Add New LLM Provider
 
-- ✅ Real-time streaming responses
-- ✅ Conversation persistence (in-memory)
-- ✅ Clean architecture with separation of concerns
-- ✅ SOLID principles
-- ✅ Swappable components
-- ✅ Type safety (Python typing + TypeScript)
-- ✅ Error handling
-- ✅ Responsive UI
+1. Implement `ILLMProvider` interface:
+```python
+class MyProvider(ILLMProvider):
+    async def generate_response(self, messages, thread_id=None) -> str:
+        ...
+    
+    async def generate_response_stream(self, messages, thread_id=None):
+        yield chunk
+    
+    async def resume(self, thread_id, user_input) -> dict:
+        ...
+```
 
-## Future Enhancements
+2. Update `dependencies.py` to use your provider
 
-- [ ] Add PostgreSQL/MongoDB database
-- [ ] Implement LangGraph integration
-- [ ] Add authentication
-- [ ] Multiple conversations support
-- [ ] Message editing/deletion
-- [ ] Code syntax highlighting
-- [ ] File attachments
-- [ ] Export conversations
+### Add New Storage Backend
+
+1. Implement `IConversationRepository` interface
+2. Update `dependencies.py` factory function
 
 ## License
 

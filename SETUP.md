@@ -2,9 +2,9 @@
 
 ## Prerequisites
 
-- Python 3.10+ installed
+- Python 3.11+ installed
 - Node.js 18+ installed
-- Anthropic API key ([Get one here](https://console.anthropic.com/))
+- OpenAI API key ([Get one here](https://platform.openai.com/api-keys))
 
 ## Step-by-Step Setup
 
@@ -36,13 +36,19 @@ pip install -r requirements.txt
 
 ### 3. Configure Backend Environment
 
-Edit `backend/.env` and add your API key:
+Copy the example and edit `backend/.env`:
 
 ```bash
-ANTHROPIC_API_KEY=sk-ant-your-actual-api-key-here
+cp .env.example .env
+```
+
+Add your API key:
+
+```bash
+OPENAI_API_KEY=sk-your-actual-api-key-here
 CORS_ORIGINS=http://localhost:3000
-LLM_PROVIDER=anthropic
-STORAGE_TYPE=memory
+LLM_PROVIDER=openai
+STORAGE_TYPE=sqlite
 ```
 
 ### 4. Frontend Setup
@@ -54,7 +60,7 @@ cd frontend
 npm install
 ```
 
-The `.env.local` file is already configured with:
+The `.env.local` file should have:
 ```
 NEXT_PUBLIC_API_URL=http://localhost:8000
 ```
@@ -102,14 +108,30 @@ http://localhost:3000
    - Should show interactive Swagger documentation
 
 3. **Frontend**: Visit http://localhost:3000
-   - Should see the chat interface
+   - Should see the chat interface with sidebar
 
 ## Testing the Chatbot
 
-1. Type a message in the input box at the bottom
+1. Type a message like "I have a headache" in the input box
 2. Press Enter or click "Send"
-3. Watch the AI response stream in real-time
-4. Continue the conversation!
+3. The chatbot may ask clarifying questions with options
+4. Click an option or type your response
+5. Continue until you get a final response
+
+## Configuration Options
+
+### Storage Type
+
+| Value | Description |
+|-------|-------------|
+| `sqlite` | Persistent storage in `conversations.db` (recommended) |
+| `memory` | In-memory storage, lost on restart |
+
+### Database Files
+
+When using SQLite, two database files are created:
+- `conversations.db` - Chat history
+- `checkpoints.db` - LangGraph workflow state
 
 ## Troubleshooting
 
@@ -121,22 +143,17 @@ http://localhost:3000
 # Windows: venv\Scripts\activate
 # macOS/Linux: source venv/bin/activate
 
-# Then reinstall
 pip install -r requirements.txt
 ```
 
-**Problem**: `anthropic.APIError: invalid_api_key`
+**Problem**: `openai.APIError: invalid_api_key`
 ```bash
 # Check your .env file has correct API key
-cat .env  # macOS/Linux
-type .env  # Windows
-
-# Make sure ANTHROPIC_API_KEY is set correctly
+# Make sure OPENAI_API_KEY is set correctly
 ```
 
 **Problem**: `uvicorn: command not found`
 ```bash
-# Install uvicorn explicitly
 pip install uvicorn[standard]
 ```
 
@@ -146,14 +163,11 @@ pip install uvicorn[standard]
 ```bash
 # Delete node_modules and reinstall
 rm -rf node_modules package-lock.json  # macOS/Linux
-# Windows: delete node_modules folder manually
-
 npm install
 ```
 
 **Problem**: Port 3000 already in use
 ```bash
-# Kill process on port 3000
 # Windows:
 netstat -ano | findstr :3000
 taskkill /PID <PID> /F
@@ -163,71 +177,45 @@ lsof -ti:3000 | xargs kill -9
 ```
 
 **Problem**: Cannot connect to backend
-```bash
-# Check backend is running on port 8000
-# Check .env.local has correct API URL
-# Check CORS settings in backend/.env
-```
+- Check backend is running on port 8000
+- Check `.env.local` has correct API URL
+- Check CORS settings in `backend/.env`
 
 ## Development Tips
 
-### Backend Hot Reload
+### Hot Reload
 
-The backend uses `uvicorn` with `reload=True`, so changes to Python files will automatically reload the server.
-
-### Frontend Hot Reload
-
-Next.js automatically hot-reloads on file changes. Just save your changes and see them instantly.
+Both backend (uvicorn) and frontend (Next.js) support hot reload. Save your changes and they'll apply automatically.
 
 ### Debugging
 
 **Backend**:
-- Check logs in the terminal running `python main.py`
-- Add `print()` statements or use Python debugger
+- Check terminal logs
 - Visit `/docs` for API documentation
+- Add print statements or use Python debugger
 
 **Frontend**:
 - Open browser DevTools (F12)
-- Check Console tab for errors
-- Check Network tab for API calls
-
-## Next Steps
-
-1. Read [README.md](./README.md) for feature overview
-2. Read [ARCHITECTURE.md](./ARCHITECTURE.md) for system design
-3. Try swapping components (see README.md)
-4. Extend with your own features!
+- Check Console and Network tabs
 
 ## Common Commands
 
 ### Backend
 ```bash
-# Run server
-python main.py
-
-# Install new package
-pip install package-name
-pip freeze > requirements.txt
+python main.py              # Run server
+pip install package-name    # Install package
+pip freeze > requirements.txt  # Update requirements
 ```
 
 ### Frontend
 ```bash
-# Run dev server
-npm run dev
-
-# Build for production
-npm run build
-
-# Run production build
-npm start
-
-# Install new package
-npm install package-name
+npm run dev     # Development server
+npm run build   # Production build
+npm start       # Run production build
 ```
 
-## Getting Help
+## Next Steps
 
-- Check the [README.md](./README.md)
-- Check the [ARCHITECTURE.md](./ARCHITECTURE.md)
-- Review code comments in source files
-- Check API docs at http://localhost:8000/docs
+1. Read [README.md](./README.md) for feature overview
+2. Read [ARCHITECTURE.md](./ARCHITECTURE.md) for system design
+3. Read [DATA_PERSISTENCE.md](./DATA_PERSISTENCE.md) for storage details
