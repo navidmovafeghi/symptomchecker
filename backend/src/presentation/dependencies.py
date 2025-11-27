@@ -8,7 +8,8 @@ from ..application.use_cases import (
     SendMessageUseCase,
     GetConversationHistoryUseCase,
     DeleteConversationUseCase,
-    ListConversationsUseCase
+    ListConversationsUseCase,
+    ResumeConversationUseCase
 )
 from .config import settings
 
@@ -77,5 +78,13 @@ def get_delete_conversation_use_case() -> DeleteConversationUseCase:
 def get_list_conversations_use_case() -> ListConversationsUseCase:
     """Get ListConversationsUseCase instance."""
     return ListConversationsUseCase(
+        conversation_repository=get_conversation_repository()
+    )
+
+
+def get_resume_conversation_use_case() -> ResumeConversationUseCase:
+    """Get ResumeConversationUseCase instance."""
+    return ResumeConversationUseCase(
+        llm_provider=get_llm_provider(),
         conversation_repository=get_conversation_repository()
     )

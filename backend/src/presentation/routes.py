@@ -62,25 +62,23 @@ async def send_message_stream(
         raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
 
 
-from pydantic import BaseModel
+from ..application.dtos import ResumeConversationRequest, ResumeConversationResponse
+from ..application.use_cases import ResumeConversationUseCase
+from .dependencies import get_resume_conversation_use_case
 
-class ResumeRequest(BaseModel):
-    thread_id: str
-    user_input: str
 
-@router.post("/resume")
+@router.post("/resume", response_model=ResumeConversationResponse)
 async def resume_conversation(
-    request: ResumeRequest,
-    use_case: SendMessageUseCase = Depends(get_send_message_use_case)
+    request: ResumeConversationRequest,
+    use_case: ResumeConversationUseCase = Depends(get_resume_conversation_use_case)
 ):
     """Resume an interrupted conversation with user's clarification."""
     try:
-        # Get the LLM provider and call resume
-        from .dependencies import get_llm_provider
-        llm_provider = get_llm_provider()
-
-        result = await llm_provider.resume(request.thread_id, request.user_input)
-        return result
+        return await use_case.execute(request)
+    except InvalidMessageException as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except ConversationNotFoundException as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Resume error: {str(e)}")
 

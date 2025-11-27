@@ -47,3 +47,18 @@ class ConversationSummary(BaseModel):
 class ConversationListResponse(BaseModel):
     """Response containing list of conversations."""
     conversations: List[ConversationSummary]
+
+
+class ResumeConversationRequest(BaseModel):
+    """Request to resume an interrupted conversation."""
+    thread_id: str = Field(..., description="Thread ID (same as conversation_id)")
+    user_input: str = Field(..., min_length=1, description="User's response to clarification")
+
+
+class ResumeConversationResponse(BaseModel):
+    """Response after resuming a conversation."""
+    type: str  # "interrupt" or "complete"
+    question: Optional[str] = None  # For interrupt
+    options: Optional[List[str]] = None  # For interrupt
+    content: Optional[str] = None  # For complete
+    conversation_id: UUID

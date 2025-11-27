@@ -11,7 +11,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import AIMessage, HumanMessage, BaseMessage
 from langgraph.graph import StateGraph, START
 from langgraph.graph.message import add_messages
-from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.types import Command, interrupt
 
 from ..domain.interfaces import ILLMProvider
@@ -96,7 +96,7 @@ class MedicalChatbotProvider(ILLMProvider):
     - Mid-flow intent switching support
     - Frustration/unclear response detection
     - Per-node model configuration with reasoning support
-    - MemorySaver for state persistence
+    - AsyncSqliteSaver for persistent state across server restarts
     """
 
     def __init__(self, api_key: str, db_path: str = "checkpoints.db"):
@@ -104,12 +104,11 @@ class MedicalChatbotProvider(ILLMProvider):
         
         Args:
             api_key: OpenAI API key
-            db_path: Path to SQLite database for checkpointing (unused with MemorySaver)
+            db_path: Path to SQLite database for checkpointing
         """
         self.api_key = api_key
         self.db_path = db_path
         self._model_cache: Dict[str, ChatOpenAI] = {}
-        self._checkpointer = MemorySaver()
 
     def _get_model(self, node_name: str) -> ChatOpenAI:
         """Get the configured model for a specific node.
@@ -601,51 +600,53 @@ Be professional and thorough while keeping the response accessible."""
         config = {"configurable": {"thread_id": thread_id}}
 
         try:
-            graph = self._build_graph(self._checkpointer)
+            # Use async context manager for SQLite checkpointer
+            async with AsyncSqliteSaver.from_conn_string(self.db_path) as checkpointer:
+                graph = self._build_graph(checkpointer)
 
-            # Initialize state
-            initial_state = {
-                "messages": lc_messages,
-                "intent": None,
-                "symptom_history": [],
-                "has_enough_info": False,
-                "unclear_count": 0,
-                "is_early_exit": False,
-            }
+                # Initialize state
+                initial_state = {
+                    "messages": lc_messages,
+                    "intent": None,
+                    "symptom_history": [],
+                    "has_enough_info": False,
+                    "unclear_count": 0,
+                    "is_early_exit": False,
+                }
 
-            result = await graph.ainvoke(initial_state, config=config)
+                result = await graph.ainvoke(initial_state, config=config)
 
-            # Check for interrupt
-            if "__interrupt__" in result:
-                interrupt_info = result["__interrupt__"][0]
-                question_text = interrupt_info.value
-                options = []
-                
-                # Parse options from the question if present
-                if "__OPTIONS__:" in question_text:
-                    parts = question_text.split("__OPTIONS__:")
-                    question_text = parts[0].strip()
-                    try:
-                        options = json.loads(parts[1])
-                    except (json.JSONDecodeError, IndexError):
-                        options = []
-                
-                yield json.dumps({
-                    "type": "interrupt",
-                    "question": question_text,
-                    "options": options,
-                    "thread_id": thread_id
-                })
-            else:
-                # Final result - yield the last AI message
-                last_message = next(
-                    (msg for msg in reversed(result["messages"]) if isinstance(msg, AIMessage)),
-                    None
-                )
-                if last_message:
-                    yield _extract_text_content(last_message.content)
+                # Check for interrupt
+                if "__interrupt__" in result:
+                    interrupt_info = result["__interrupt__"][0]
+                    question_text = interrupt_info.value
+                    options = []
+                    
+                    # Parse options from the question if present
+                    if "__OPTIONS__:" in question_text:
+                        parts = question_text.split("__OPTIONS__:")
+                        question_text = parts[0].strip()
+                        try:
+                            options = json.loads(parts[1])
+                        except (json.JSONDecodeError, IndexError):
+                            options = []
+                    
+                    yield json.dumps({
+                        "type": "interrupt",
+                        "question": question_text,
+                        "options": options,
+                        "thread_id": thread_id
+                    })
                 else:
-                    yield "I apologize, but I couldn't generate a response. Please try again."
+                    # Final result - yield the last AI message
+                    last_message = next(
+                        (msg for msg in reversed(result["messages"]) if isinstance(msg, AIMessage)),
+                        None
+                    )
+                    if last_message:
+                        yield _extract_text_content(last_message.content)
+                    else:
+                        yield "I apologize, but I couldn't generate a response. Please try again."
 
         except Exception as e:
             raise LLMProviderException(f"MedicalChatbotProvider error: {str(e)}")
@@ -655,44 +656,46 @@ Be professional and thorough while keeping the response accessible."""
         config = {"configurable": {"thread_id": thread_id}}
 
         try:
-            graph = self._build_graph(self._checkpointer)
+            # Use async context manager for SQLite checkpointer
+            async with AsyncSqliteSaver.from_conn_string(self.db_path) as checkpointer:
+                graph = self._build_graph(checkpointer)
 
-            result = await graph.ainvoke(
-                Command(resume=user_input),
-                config=config
-            )
-
-            # Check for another interrupt or final result
-            if "__interrupt__" in result:
-                interrupt_info = result["__interrupt__"][0]
-                question_text = interrupt_info.value
-                options = []
-                
-                # Parse options from the question if present
-                if "__OPTIONS__:" in question_text:
-                    parts = question_text.split("__OPTIONS__:")
-                    question_text = parts[0].strip()
-                    try:
-                        options = json.loads(parts[1])
-                    except (json.JSONDecodeError, IndexError):
-                        options = []
-                
-                return {
-                    "type": "interrupt",
-                    "question": question_text,
-                    "options": options
-                }
-            else:
-                last_message = next(
-                    (msg for msg in reversed(result["messages"]) if isinstance(msg, AIMessage)),
-                    None
+                result = await graph.ainvoke(
+                    Command(resume=user_input),
+                    config=config
                 )
-                content = _extract_text_content(last_message.content) if last_message else "Conversation completed."
-                return {
-                    "type": "complete",
-                    "content": content,
-                    "intent": result.get("intent")
-                }
+
+                # Check for another interrupt or final result
+                if "__interrupt__" in result:
+                    interrupt_info = result["__interrupt__"][0]
+                    question_text = interrupt_info.value
+                    options = []
+                    
+                    # Parse options from the question if present
+                    if "__OPTIONS__:" in question_text:
+                        parts = question_text.split("__OPTIONS__:")
+                        question_text = parts[0].strip()
+                        try:
+                            options = json.loads(parts[1])
+                        except (json.JSONDecodeError, IndexError):
+                            options = []
+                    
+                    return {
+                        "type": "interrupt",
+                        "question": question_text,
+                        "options": options
+                    }
+                else:
+                    last_message = next(
+                        (msg for msg in reversed(result["messages"]) if isinstance(msg, AIMessage)),
+                        None
+                    )
+                    content = _extract_text_content(last_message.content) if last_message else "Conversation completed."
+                    return {
+                        "type": "complete",
+                        "content": content,
+                        "intent": result.get("intent")
+                    }
 
         except Exception as e:
             raise LLMProviderException(f"MedicalChatbotProvider resume error: {str(e)}")

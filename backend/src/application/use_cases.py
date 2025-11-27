@@ -12,7 +12,9 @@ from .dtos import (
     ConversationResponse,
     ConversationListResponse,
     ConversationSummary,
-    MessageResponse
+    MessageResponse,
+    ResumeConversationRequest,
+    ResumeConversationResponse
 )
 
 
@@ -207,3 +209,73 @@ class ListConversationsUseCase:
                 for conv in conversations
             ]
         )
+
+
+class ResumeConversationUseCase:
+    """Use case for resuming an interrupted conversation."""
+
+    def __init__(
+        self,
+        llm_provider: ILLMProvider,
+        conversation_repository: IConversationRepository
+    ):
+        self.llm_provider = llm_provider
+        self.conversation_repository = conversation_repository
+
+    async def execute(self, request: ResumeConversationRequest) -> ResumeConversationResponse:
+        """Resume an interrupted conversation with user's clarification.
+        
+        This persists both the user's answer and the AI's response to the conversation.
+        """
+        # Validate input
+        if not request.user_input.strip():
+            raise InvalidMessageException("User input cannot be empty")
+
+        # thread_id equals conversation_id
+        try:
+            conversation_id = UUID(request.thread_id)
+        except ValueError:
+            raise InvalidMessageException(f"Invalid thread_id format: {request.thread_id}")
+
+        # Load conversation
+        conversation = await self.conversation_repository.get_by_id(conversation_id)
+        if not conversation:
+            raise ConversationNotFoundException(
+                f"Conversation {conversation_id} not found"
+            )
+
+        # Add user's answer as a message
+        user_message = Message(role="user", content=request.user_input)
+        conversation = conversation.add_message(user_message)
+        
+        # Save conversation with user message
+        await self.conversation_repository.save(conversation)
+
+        # Call LLM provider's resume
+        result = await self.llm_provider.resume(request.thread_id, request.user_input)
+
+        if result.get("type") == "interrupt":
+            # Another clarification needed - save the question as assistant message
+            question = result.get("question", "")
+            assistant_message = Message(role="assistant", content=question)
+            conversation = conversation.add_message(assistant_message)
+            await self.conversation_repository.save(conversation)
+
+            return ResumeConversationResponse(
+                type="interrupt",
+                question=question,
+                options=result.get("options", []),
+                conversation_id=conversation_id
+            )
+        else:
+            # Complete - save the final response
+            content = result.get("content", "")
+            assistant_message = Message(role="assistant", content=content)
+            conversation = conversation.add_message(assistant_message)
+            await self.conversation_repository.save(conversation)
+
+            return ResumeConversationResponse(
+                type="complete",
+                content=content,
+                conversation_id=conversation_id
+            )

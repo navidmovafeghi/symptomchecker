@@ -130,8 +130,8 @@ class ApiService {
     threadId: string,
     userInput: string
   ): Promise<
-    | { type: 'complete'; content: string }
-    | { type: 'interrupt'; question: string; options: string[] }
+    | { type: 'complete'; content: string; conversation_id: string }
+    | { type: 'interrupt'; question: string; options: string[]; conversation_id: string }
   > {
     const response = await fetch(`${this.baseUrl}/api/chat/resume`, {
       method: 'POST',
