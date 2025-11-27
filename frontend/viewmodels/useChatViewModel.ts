@@ -140,6 +140,7 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
             pendingQuestion: result.question,
             pendingOptions: result.options,
             threadId: result.threadId,
+            conversationId: result.conversationId || conversationId,
             isStreaming: false,
             isLoading: false,
           });
@@ -148,10 +149,9 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
 
         set({ isStreaming: false, currentStreamingMessage: '' });
 
-        // Note: In streaming mode, conversation_id needs to be tracked differently
-        // For now, we'll generate a client-side ID if not present
-        if (!conversationId) {
-          set({ conversationId: `conv-${Date.now()}` });
+        // Update conversation_id from backend response
+        if (result.conversationId) {
+          set({ conversationId: result.conversationId });
         }
       } else {
         // Non-streaming mode
@@ -242,6 +242,8 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
           pendingQuestion: null,
           pendingOptions: [],
         });
+        // Refresh conversation list
+        get().loadConversations();
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to resume conversation';
@@ -309,6 +311,8 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
           pendingQuestion: null,
           pendingOptions: [],
         });
+        // Refresh conversation list
+        get().loadConversations();
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to resume conversation';

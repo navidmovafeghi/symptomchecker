@@ -21,7 +21,8 @@ export function Sidebar() {
   // Load conversations on mount
   useEffect(() => {
     loadConversations();
-  }, [loadConversations]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);

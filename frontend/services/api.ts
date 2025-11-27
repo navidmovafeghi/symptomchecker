@@ -46,8 +46,8 @@ class ApiService {
     request: SendMessageRequest,
     onChunk: (chunk: string) => void
   ): Promise<
-    | { type: 'complete' }
-    | { type: 'interrupt'; question: string; options: string[]; threadId: string }
+    | { type: 'complete'; conversationId?: string }
+    | { type: 'interrupt'; question: string; options: string[]; threadId: string; conversationId?: string }
   > {
     const response = await fetch(`${this.baseUrl}/api/chat/message/stream`, {
       method: 'POST',
@@ -69,6 +69,7 @@ class ApiService {
 
     const decoder = new TextDecoder();
     let buffer = '';
+    let conversationId: string | undefined;
 
     try {
       while (true) {
@@ -77,6 +78,21 @@ class ApiService {
 
         const chunk = decoder.decode(value, { stream: true });
         buffer += chunk;
+
+        // Check for conversation_id prefix
+        if (buffer.includes('__CONV_ID__:')) {
+          const convIdMatch = buffer.match(/__CONV_ID__:(\{[^}]+\})\n?/);
+          if (convIdMatch) {
+            try {
+              const convData = JSON.parse(convIdMatch[1]);
+              conversationId = convData.conversation_id;
+            } catch {
+              // Ignore parse errors
+            }
+            // Remove the conv_id prefix from buffer
+            buffer = buffer.replace(/__CONV_ID__:\{[^}]+\}\n?/, '');
+          }
+        }
 
         // Try to parse as JSON to detect interrupts
         try {
@@ -88,17 +104,20 @@ class ApiService {
               question: parsed.question,
               options: parsed.options || [],
               threadId: parsed.thread_id,
+              conversationId,
             };
           }
           buffer = ''; // Clear buffer if successfully parsed
         } catch {
           // Not valid JSON yet, keep accumulating
-          // Also send as normal chunk for streaming text
-          onChunk(chunk);
+          // Also send as normal chunk for streaming text (skip conv_id prefix)
+          if (!chunk.includes('__CONV_ID__:')) {
+            onChunk(chunk);
+          }
         }
       }
 
-      return { type: 'complete' };
+      return { type: 'complete', conversationId };
     } finally {
       reader.releaseLock();
     }

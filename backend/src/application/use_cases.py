@@ -83,7 +83,14 @@ class SendMessageUseCase:
         )
 
     async def execute_stream(self, request: SendMessageRequest):
-        """Execute the use case with streaming response."""
+        """Execute the use case with streaming response.
+        
+        Yields:
+            First chunk: JSON with conversation_id (prefixed with __CONV_ID__:)
+            Subsequent chunks: LLM response text or interrupt JSON
+        """
+        import json
+        
         # Validate input
         if not request.message.strip():
             raise InvalidMessageException("Message cannot be empty")
@@ -107,6 +114,9 @@ class SendMessageUseCase:
         # Save conversation immediately to persist the user message
         # This also ensures we have a conversation_id for new conversations
         await self.conversation_repository.save(conversation)
+        
+        # Yield conversation_id first so frontend can track it
+        yield f"__CONV_ID__:{json.dumps({'conversation_id': str(conversation.id)})}\n"
 
         # Generate AI response (streaming) - use conversation ID as thread_id
         messages_for_llm = conversation.get_messages_for_llm()
@@ -120,14 +130,14 @@ class SendMessageUseCase:
             full_response += chunk
             yield chunk
 
-        # Create assistant message with full response
-        assistant_message = Message(
-            role="assistant", content=full_response
-        )
-        conversation = conversation.add_message(assistant_message)
-
-        # Save conversation with assistant response
-        await self.conversation_repository.save(conversation)
+        # Create assistant message with full response (skip if it's an interrupt JSON)
+        if full_response and not full_response.startswith('{"type":'):
+            assistant_message = Message(
+                role="assistant", content=full_response
+            )
+            conversation = conversation.add_message(assistant_message)
+            # Save conversation with assistant response
+            await self.conversation_repository.save(conversation)
 
 
 class GetConversationHistoryUseCase:
