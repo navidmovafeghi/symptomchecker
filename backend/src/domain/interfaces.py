@@ -1,8 +1,6 @@
 """Domain interfaces - ports for infrastructure adapters."""
 from abc import ABC, abstractmethod
 from typing import List, Optional, Dict, Any, AsyncIterator
-from uuid import UUID
-from .entities import Conversation, Message
 
 
 class ILLMProvider(ABC):
@@ -49,25 +47,17 @@ class ILLMProvider(ABC):
         raise NotImplementedError("This provider does not support resume")
 
 
-class IConversationRepository(ABC):
-    """Interface for conversation storage (swappable)."""
+class ICheckpointManager(ABC):
+    """Interface for managing LangGraph checkpoint data."""
 
     @abstractmethod
-    async def save(self, conversation: Conversation) -> None:
-        """Save or update a conversation."""
-        pass
-
-    @abstractmethod
-    async def get_by_id(self, conversation_id: UUID) -> Optional[Conversation]:
-        """Retrieve a conversation by ID."""
-        pass
-
-    @abstractmethod
-    async def delete(self, conversation_id: UUID) -> bool:
-        """Delete a conversation."""
-        pass
-
-    @abstractmethod
-    async def list_all(self) -> List[Conversation]:
-        """List all conversations."""
+    async def delete_checkpoint(self, thread_id: str) -> bool:
+        """Delete checkpoint data for a thread.
+        
+        Args:
+            thread_id: The unique thread identifier for the checkpoint to delete.
+            
+        Returns:
+            True if the checkpoint was deleted, False if it didn't exist.
+        """
         pass

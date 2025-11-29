@@ -5,8 +5,7 @@
 import {
   SendMessageRequest,
   SendMessageResponse,
-  Conversation,
-  ConversationListResponse,
+  CheckpointExpiredError,
 } from '@/types';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
@@ -41,6 +40,10 @@ class ApiService {
   /**
    * Send a message and stream the response.
    * Returns interrupt info if the LLM needs clarification.
+   * 
+   * @param request - The message request including optional conversation_history
+   *                  for LLM context (since server doesn't store conversations)
+   * @param onChunk - Callback for streaming response chunks
    */
   async sendMessageStream(
     request: SendMessageRequest,
@@ -49,12 +52,19 @@ class ApiService {
     | { type: 'complete'; conversationId?: string }
     | { type: 'interrupt'; question: string; options: string[]; threadId: string; conversationId?: string }
   > {
+    // Build request body, including conversation_history if provided
+    const requestBody: SendMessageRequest = {
+      message: request.message,
+      ...(request.conversation_id && { conversation_id: request.conversation_id }),
+      ...(request.conversation_history && { conversation_history: request.conversation_history }),
+    };
+
     const response = await fetch(`${this.baseUrl}/api/chat/message/stream`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(request),
+      body: JSON.stringify(requestBody),
     });
 
     if (!response.ok) {
@@ -125,6 +135,8 @@ class ApiService {
 
   /**
    * Resume an interrupted conversation with user's answer.
+   * 
+   * @throws {CheckpointExpiredError} When the server checkpoint is missing (404)
    */
   async resumeConversation(
     threadId: string,
@@ -145,6 +157,13 @@ class ApiService {
     });
 
     if (!response.ok) {
+      // Handle checkpoint not found (expired)
+      if (response.status === 404) {
+        throw new CheckpointExpiredError(
+          'This conversation cannot be resumed. The server session has expired.'
+        );
+      }
+      
       const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
       throw new Error(error.detail || 'Failed to resume conversation');
     }
@@ -153,51 +172,28 @@ class ApiService {
   }
 
   /**
-   * Get conversation history.
+   * Delete only the server checkpoint for a conversation.
+   * The conversation data itself is stored in IndexedDB on the client.
+   * This is called when deleting a conversation to clean up server resources.
+   * 
+   * @param conversationId - The conversation/thread ID to delete checkpoint for
    */
-  async getConversation(conversationId: string): Promise<Conversation> {
+  async deleteCheckpoint(conversationId: string): Promise<void> {
     const response = await fetch(
-      `${this.baseUrl}/api/chat/conversations/${conversationId}`
-    );
-
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
-      throw new Error(error.detail || 'Failed to get conversation');
-    }
-
-    return response.json();
-  }
-
-  /**
-   * Delete a conversation.
-   */
-  async deleteConversation(conversationId: string): Promise<void> {
-    const response = await fetch(
-      `${this.baseUrl}/api/chat/conversations/${conversationId}`,
+      `${this.baseUrl}/api/chat/checkpoints/${conversationId}`,
       {
         method: 'DELETE',
       }
     );
 
-    if (!response.ok) {
+    // 404 is acceptable - checkpoint may already be expired/deleted
+    if (!response.ok && response.status !== 404) {
       const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
-      throw new Error(error.detail || 'Failed to delete conversation');
+      throw new Error(error.detail || 'Failed to delete checkpoint');
     }
   }
 
-  /**
-   * List all conversations.
-   */
-  async listConversations(): Promise<ConversationListResponse> {
-    const response = await fetch(`${this.baseUrl}/api/chat/conversations`);
-
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
-      throw new Error(error.detail || 'Failed to list conversations');
-    }
-
-    return response.json();
-  }
 }
 
+export { ApiService };
 export const apiService = new ApiService();

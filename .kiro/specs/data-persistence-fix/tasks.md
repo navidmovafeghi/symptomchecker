@@ -1,0 +1,146 @@
+# Implementation Plan
+
+- [x] 1. Update database schema and entities
+  - [x] 1.1 Add version and has_pending_response fields to Conversation entity
+    - Update `backend/src/domain/entities.py` to add `version: int = 1` and `has_pending_response: bool = False` fields
+    - Update `add_message()` to preserve version when creating new instance
+    - _Requirements: 2.3_
+  - [x] 1.2 Write property test for version preservation
+    - **Property 4: Version increment on update**
+    - **Validates: Requirements 2.3**
+  - [x] 1.3 Update SQLiteConversationRepository schema
+    - Add migration logic to add `version` and `has_pending_response` columns
+    - Enable WAL mode with `PRAGMA journal_mode=WAL`
+    - Update `_ensure_initialized()` to handle schema migration
+    - _Requirements: 4.4_
+  - [x] 1.4 Update repository serialization/deserialization
+    - Update `save()` to include version and has_pending_response in INSERT/UPDATE
+    - Update `_row_to_conversation()` to read version and has_pending_response fields
+    - _Requirements: 5.1_
+
+- [x] 2. Implement optimistic locking in repository
+  - [x] 2.1 Create custom exception classes
+    - Add `OptimisticLockError` and `SaveFailedError` to `backend/src/domain/exceptions.py`
+    - _Requirements: 2.1, 2.4_
+  - [x] 2.2 Implement optimistic locking in save method
+    - Change `INSERT OR REPLACE` to conditional `UPDATE` with version check for existing conversations
+    - Increment version on successful save
+    - Raise `OptimisticLockError` when version mismatch detected (rows affected = 0)
+    - Handle new conversation insert separately (INSERT with version = 1)
+    - Update `save()` to return the updated Conversation with new version
+    - _Requirements: 2.1, 2.3, 2.4_
+  - [x] 2.3 Write property test for stale write rejection
+    - **Property 5: Stale write rejection**
+    - **Validates: Requirements 2.1, 2.4**
+  - [x] 2.4 Write property test for version increment on save
+    - **Property 4: Version increment on update**
+    - **Validates: Requirements 2.3**
+
+- [x] 3. Implement retry logic and conflict resolution
+  - [x] 3.1 Create ConversationTransactionManager class
+    - Create `backend/src/infrastructure/transaction_manager.py`
+    - Implement `execute_with_retry()` with exponential backoff (max 3 retries)
+    - Implement `save_with_conflict_resolution()` that reloads and merges on conflict
+    - _Requirements: 1.4, 2.2_
+  - [x] 3.2 Write property test for retry behavior
+    - **Property 3: Save retry on failure**
+    - **Validates: Requirements 1.4**
+  - [x] 3.3 Write property test for conflict resolution
+    - **Property 6: Conflict resolution via reload and merge**
+    - **Validates: Requirements 2.2**
+
+- [x] 4. Checkpoint - Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+
+- [x] 5. Fix interrupt message persistence
+  - [x] 5.1 Update SendMessageUseCase.execute_stream() to save interrupt messages
+    - Parse interrupt JSON response and extract question
+    - Save clarification question as assistant message before yielding interrupt
+    - Set `has_pending_response = False` after interrupt is saved
+    - _Requirements: 1.1, 3.1_
+  - [x] 5.2 Write property test for interrupt persistence
+    - **Property 1: Interrupt messages are persisted**
+    - **Validates: Requirements 1.1**
+  - [x] 5.3 Update streaming error handling
+    - Wrap streaming loop in try/except
+    - On failure, set `has_pending_response = True` and save conversation
+    - Preserve user message even when LLM fails
+    - _Requirements: 1.2_
+  - [x] 5.4 Write property test for streaming failure recovery
+    - **Property 2: User messages survive streaming failures**
+    - **Validates: Requirements 1.2**
+
+- [x] 6. Fix ResumeConversationUseCase
+  - [x] 6.1 Update resume to load fresh conversation state and use transaction manager
+    - Always reload conversation from repository before processing
+    - Use transaction manager for saves with conflict resolution
+    - _Requirements: 3.2, 2.2_
+  - [x] 6.2 Write property test for fresh state loading
+    - **Property 8: Fresh state on resume**
+    - **Validates: Requirements 3.2**
+  - [x] 6.3 Ensure response is saved before returning
+    - Save assistant message immediately after LLM returns (already implemented)
+    - _Requirements: 3.3_
+  - [x] 6.4 Write property test for response persistence
+    - **Property 7: Checkpoint-conversation synchronization**
+    - **Validates: Requirements 3.1, 3.3**
+
+- [x] 7. Checkpoint - Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+
+- [x] 8. Implement checkpoint cleanup
+  - [x] 8.1 Add ICheckpointManager interface to domain
+    - Add `ICheckpointManager` interface to `backend/src/domain/interfaces.py`
+    - Define `delete_checkpoint(thread_id: str) -> bool` method
+    - _Requirements: 3.4_
+  - [x] 8.2 Add checkpoint deletion to MedicalChatbotProvider
+    - Implement `ICheckpointManager` interface in MedicalChatbotProvider
+    - Add `delete_checkpoint(thread_id: str)` method
+    - Use AsyncSqliteSaver to delete checkpoint by thread_id
+    - _Requirements: 3.4_
+  - [x] 8.3 Update DeleteConversationUseCase
+    - Inject checkpoint manager dependency
+    - Call checkpoint deletion after conversation deletion
+    - Handle cleanup errors gracefully (log but don't fail)
+    - _Requirements: 3.4_
+  - [x] 8.4 Write property test for cascade delete
+    - **Property 9: Cascade delete to checkpoints**
+    - **Validates: Requirements 3.4**
+
+- [x] 9. Implement transaction atomicity for multi-message saves
+  - [x] 9.1 Integrate save_messages_atomically in use cases
+    - Use `ConversationTransactionManager.save_messages_atomically()` where multiple messages need atomic save
+    - Ensure rollback on any failure
+    - _Requirements: 4.1, 4.2_
+  - [x] 9.2 Write property test for transaction atomicity
+    - **Property 10: Transaction atomicity**
+    - **Validates: Requirements 4.1, 4.2**
+
+- [x] 10. Ensure data integrity
+  - [x] 10.1 Verify message ordering in repository
+    - Ensure `list_all()` and `get_by_id()` return messages in chronological order
+    - Messages are stored as JSON array - verify order is preserved on load
+    - Add explicit sorting by timestamp if needed
+    - _Requirements: 5.2_
+  - [x] 10.2 Write property test for message ordering
+    - **Property 11: Message chronological ordering**
+    - **Validates: Requirements 5.2**
+  - [x] 10.3 Verify accurate message counts
+    - `ListConversationsUseCase` already returns correct counts using `len(conv.messages)`
+    - _Requirements: 5.4_
+  - [x] 10.4 Write property test for message count accuracy
+    - **Property 12: Accurate message count**
+    - **Validates: Requirements 5.4**
+
+- [x] 11. Update dependencies and configuration
+  - [x] 11.1 Update dependencies.py
+    - Create and inject ConversationTransactionManager
+    - Update use case constructors to accept transaction manager
+    - Add checkpoint manager to DeleteConversationUseCase
+    - _Requirements: 3.4, 4.1_
+  - [x] 11.2 Add Hypothesis to requirements.txt
+    - Hypothesis>=6.0.0 already present in requirements.txt
+    - _Requirements: Testing_
+
+- [x] 12. Final Checkpoint - Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.

@@ -1,11 +1,22 @@
 /**
  * Chat ViewModel - manages chat state and business logic.
  * MVVM Pattern: This is the ViewModel layer.
+ * 
+ * Updated to use client-side IndexedDB storage for conversations.
+ * Requirements: 1.2, 1.4
  */
 
 import { create } from 'zustand';
-import { Message, ConversationSummary } from '@/types';
+import { Message, ConversationSummary, CheckpointExpiredError } from '@/types';
 import { apiService } from '@/services/api';
+import {
+  getStorageService,
+  initializeStorage,
+  isStorageSupported,
+  StorageError,
+  StoredConversation,
+  StoredMessage,
+} from '@/services/storage';
 
 interface ChatState {
   // State
@@ -26,6 +37,12 @@ interface ChatState {
   pendingOptions: string[];
   threadId: string | null;
 
+  // Storage state (NEW - Requirements: 1.4)
+  storageError: string | null;
+  isStorageAvailable: boolean;
+  checkpointExpired: boolean;
+  checkpointExpiredMessage: string | null;
+
   // Actions
   sendMessage: (content: string, useStreaming?: boolean) => Promise<void>;
   resumeConversation: (userInput: string) => Promise<void>;
@@ -38,6 +55,76 @@ interface ChatState {
   selectConversation: (conversationId: string) => Promise<void>;
   newConversation: () => void;
   deleteConversation: (conversationId: string) => Promise<void>;
+  
+  // Storage actions (NEW - Requirements: 1.2, 1.4)
+  initializeStorage: () => Promise<void>;
+  clearStorageError: () => void;
+  clearCheckpointExpired: () => void;
+}
+
+/**
+ * Helper function to convert Message to StoredMessage.
+ */
+function messageToStoredMessage(msg: Message): StoredMessage {
+  return {
+    id: msg.id,
+    role: msg.role,
+    content: msg.content,
+    timestamp: msg.timestamp,
+    options: msg.options,
+    isQuestion: msg.isQuestion,
+  };
+}
+
+/**
+ * Helper function to convert StoredMessage to Message.
+ */
+function storedMessageToMessage(msg: StoredMessage): Message {
+  return {
+    id: msg.id,
+    role: msg.role,
+    content: msg.content,
+    timestamp: msg.timestamp,
+    options: msg.options,
+    isQuestion: msg.isQuestion,
+  };
+}
+
+/**
+ * Helper function to generate a title from the first user message.
+ */
+function generateTitle(messages: Message[]): string | null {
+  const firstUserMessage = messages.find(m => m.role === 'user');
+  if (!firstUserMessage) return null;
+  const content = firstUserMessage.content.trim();
+  return content.length > 50 ? content.substring(0, 47) + '...' : content;
+}
+
+/**
+ * Helper function to build a StoredConversation from current state.
+ */
+function buildStoredConversation(
+  conversationId: string,
+  messages: Message[],
+  threadId: string | null,
+  isInterrupted: boolean,
+  pendingQuestion: string | null,
+  pendingOptions: string[],
+  existingCreatedAt?: string
+): StoredConversation {
+  const now = new Date().toISOString();
+  return {
+    id: conversationId,
+    title: generateTitle(messages),
+    messages: messages.map(messageToStoredMessage),
+    created_at: existingCreatedAt || now,
+    updated_at: now,
+    version: 1,
+    thread_id: threadId || conversationId,
+    is_interrupted: isInterrupted,
+    pending_question: pendingQuestion || undefined,
+    pending_options: pendingOptions.length > 0 ? pendingOptions : undefined,
+  };
 }
 
 export const useChatViewModel = create<ChatState>((set, get) => ({
@@ -59,9 +146,17 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
   pendingOptions: [],
   threadId: null,
 
+  // Storage state (NEW - Requirements: 1.4)
+  // Initialize as false to avoid hydration mismatch - will be set correctly on client mount
+  storageError: null,
+  isStorageAvailable: false,
+  checkpointExpired: false,
+  checkpointExpiredMessage: null,
+
   // Send message action
+  // Requirements: 1.1, 1.3, 3.2
   sendMessage: async (content: string, useStreaming: boolean = true) => {
-    const { conversationId, messages } = get();
+    const { conversationId, messages, isStorageAvailable } = get();
 
     // Validation
     if (!content.trim()) {
@@ -72,15 +167,50 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
     // Clear any previous errors and waiting state
     set({ error: null, isLoading: true, isWaitingForInput: false, pendingOptions: [] });
 
-    // Create temporary user message for immediate UI feedback
-    const tempUserMessage: Message = {
-      id: `temp-${Date.now()}`,
+    // Create user message with proper ID
+    const userMessage: Message = {
+      id: `user-${Date.now()}`,
       role: 'user',
       content: content.trim(),
       timestamp: new Date().toISOString(),
     };
 
-    set({ messages: [...messages, tempUserMessage] });
+    const messagesWithUser = [...messages, userMessage];
+    set({ messages: messagesWithUser });
+
+    // Helper to save conversation to IndexedDB
+    const saveToStorage = async (
+      convId: string,
+      msgs: Message[],
+      threadId: string | null,
+      isInterrupted: boolean,
+      pendingQ: string | null,
+      pendingOpts: string[]
+    ) => {
+      if (!isStorageAvailable) return;
+      
+      try {
+        const storageService = getStorageService();
+        // Try to get existing conversation to preserve created_at
+        const existing = await storageService.getConversation(convId);
+        const storedConv = buildStoredConversation(
+          convId,
+          msgs,
+          threadId,
+          isInterrupted,
+          pendingQ,
+          pendingOpts,
+          existing?.created_at
+        );
+        await storageService.saveConversation(storedConv);
+      } catch (err) {
+        if (err instanceof StorageError) {
+          set({ storageError: err.message });
+        } else {
+          console.error('Failed to save conversation to storage:', err);
+        }
+      }
+    };
 
     try {
       if (useStreaming) {
@@ -134,25 +264,43 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
             isQuestion: true,
           };
 
+          const finalMessages = [...messagesWithoutPlaceholder, questionMessage];
+          const finalConvId = result.conversationId || conversationId || `conv-${Date.now()}`;
+
           set({
-            messages: [...messagesWithoutPlaceholder, questionMessage],
+            messages: finalMessages,
             isWaitingForInput: true,
             pendingQuestion: result.question,
             pendingOptions: result.options,
             threadId: result.threadId,
-            conversationId: result.conversationId || conversationId,
+            conversationId: finalConvId,
             isStreaming: false,
             isLoading: false,
           });
+
+          // Save to IndexedDB with interrupt state (Requirements: 1.3, 3.2)
+          await saveToStorage(
+            finalConvId,
+            finalMessages,
+            result.threadId,
+            true,
+            result.question,
+            result.options
+          );
           return;
         }
 
         set({ isStreaming: false, currentStreamingMessage: '' });
 
         // Update conversation_id from backend response
+        const finalConvId = result.conversationId || conversationId || `conv-${Date.now()}`;
         if (result.conversationId) {
           set({ conversationId: result.conversationId });
         }
+
+        // Save to IndexedDB after AI response (Requirements: 1.1, 1.3, 3.2)
+        const finalMessages = get().messages;
+        await saveToStorage(finalConvId, finalMessages, finalConvId, false, null, []);
       } else {
         // Non-streaming mode
         const response = await apiService.sendMessage({
@@ -168,6 +316,16 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
           messages: updatedMessages,
           conversationId: response.conversation_id,
         });
+
+        // Save to IndexedDB (Requirements: 1.1, 1.3, 3.2)
+        await saveToStorage(
+          response.conversation_id,
+          updatedMessages,
+          response.conversation_id,
+          false,
+          null,
+          []
+        );
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to send message';
@@ -183,8 +341,9 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
   },
 
   // Select an option (click on button)
+  // Requirements: 3.3, 4.1
   selectOption: async (option: string) => {
-    const { threadId, messages } = get();
+    const { threadId, messages, conversationId, isStorageAvailable } = get();
 
     if (!threadId) {
       set({ error: 'No active conversation to resume' });
@@ -205,7 +364,41 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
       content: option,
       timestamp: new Date().toISOString(),
     };
-    set({ messages: [...updatedMessages, userMessage] });
+    const messagesWithUser = [...updatedMessages, userMessage];
+    set({ messages: messagesWithUser });
+
+    // Helper to save conversation to IndexedDB
+    const saveToStorage = async (
+      convId: string,
+      msgs: Message[],
+      tId: string | null,
+      isInterrupted: boolean,
+      pendingQ: string | null,
+      pendingOpts: string[]
+    ) => {
+      if (!isStorageAvailable || !convId) return;
+      
+      try {
+        const storageService = getStorageService();
+        const existing = await storageService.getConversation(convId);
+        const storedConv = buildStoredConversation(
+          convId,
+          msgs,
+          tId,
+          isInterrupted,
+          pendingQ,
+          pendingOpts,
+          existing?.created_at
+        );
+        await storageService.saveConversation(storedConv);
+      } catch (err) {
+        if (err instanceof StorageError) {
+          set({ storageError: err.message });
+        } else {
+          console.error('Failed to save conversation to storage:', err);
+        }
+      }
+    };
 
     try {
       const result = await apiService.resumeConversation(threadId, option);
@@ -220,13 +413,26 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
           options: result.options,
           isQuestion: true,
         };
+        const finalMessages = [...get().messages, questionMessage];
+        const convId = conversationId || result.conversation_id;
+        
         set({
-          messages: [...get().messages, questionMessage],
+          messages: finalMessages,
           isWaitingForInput: true,
           pendingQuestion: result.question,
           pendingOptions: result.options || [],
           isLoading: false,
         });
+
+        // Save interrupt state to IndexedDB (Requirements: 3.3, 4.1)
+        await saveToStorage(
+          convId,
+          finalMessages,
+          threadId,
+          true,
+          result.question,
+          result.options || []
+        );
       } else {
         // Complete - add final response
         const assistantMessage: Message = {
@@ -235,25 +441,59 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
           content: result.content,
           timestamp: new Date().toISOString(),
         };
+        const finalMessages = [...get().messages, assistantMessage];
+        const convId = conversationId || result.conversation_id;
+        
         set({
-          messages: [...get().messages, assistantMessage],
+          messages: finalMessages,
           isLoading: false,
           threadId: null,
           pendingQuestion: null,
           pendingOptions: [],
         });
+
+        // Save to IndexedDB (Requirements: 3.3)
+        await saveToStorage(convId, finalMessages, convId, false, null, []);
+        
         // Refresh conversation list
         get().loadConversations();
       }
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to resume conversation';
-      set({ error: errorMessage, isLoading: false });
+      if (err instanceof CheckpointExpiredError) {
+        // Checkpoint expired - clear interrupt state but keep messages
+        set({
+          checkpointExpired: true,
+          checkpointExpiredMessage: err.message,
+          isWaitingForInput: false,
+          pendingQuestion: null,
+          pendingOptions: [],
+          threadId: null,
+          isLoading: false,
+        });
+        // Update IndexedDB to clear interrupt state
+        if (isStorageAvailable && conversationId) {
+          const storageService = getStorageService();
+          const existing = await storageService.getConversation(conversationId);
+          if (existing) {
+            await storageService.saveConversation({
+              ...existing,
+              is_interrupted: false,
+              pending_question: undefined,
+              pending_options: undefined,
+            });
+          }
+        }
+      } else {
+        const errorMessage = err instanceof Error ? err.message : 'Failed to resume conversation';
+        set({ error: errorMessage, isLoading: false });
+      }
     }
   },
 
   // Resume conversation action (for free-text input during interrupts)
+  // Requirements: 3.3, 4.1
   resumeConversation: async (userInput: string) => {
-    const { threadId, messages } = get();
+    const { threadId, messages, conversationId, isStorageAvailable } = get();
 
     if (!threadId) {
       set({ error: 'No active conversation to resume' });
@@ -274,7 +514,41 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
       content: userInput,
       timestamp: new Date().toISOString(),
     };
-    set({ messages: [...updatedMessages, userMessage] });
+    const messagesWithUser = [...updatedMessages, userMessage];
+    set({ messages: messagesWithUser });
+
+    // Helper to save conversation to IndexedDB
+    const saveToStorage = async (
+      convId: string,
+      msgs: Message[],
+      tId: string | null,
+      isInterrupted: boolean,
+      pendingQ: string | null,
+      pendingOpts: string[]
+    ) => {
+      if (!isStorageAvailable || !convId) return;
+      
+      try {
+        const storageService = getStorageService();
+        const existing = await storageService.getConversation(convId);
+        const storedConv = buildStoredConversation(
+          convId,
+          msgs,
+          tId,
+          isInterrupted,
+          pendingQ,
+          pendingOpts,
+          existing?.created_at
+        );
+        await storageService.saveConversation(storedConv);
+      } catch (err) {
+        if (err instanceof StorageError) {
+          set({ storageError: err.message });
+        } else {
+          console.error('Failed to save conversation to storage:', err);
+        }
+      }
+    };
 
     try {
       const result = await apiService.resumeConversation(threadId, userInput);
@@ -289,13 +563,26 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
           options: result.options,
           isQuestion: true,
         };
+        const finalMessages = [...get().messages, questionMessage];
+        const convId = conversationId || result.conversation_id;
+        
         set({
-          messages: [...get().messages, questionMessage],
+          messages: finalMessages,
           isWaitingForInput: true,
           pendingQuestion: result.question,
           pendingOptions: result.options || [],
           isLoading: false,
         });
+
+        // Save interrupt state to IndexedDB (Requirements: 3.3, 4.1)
+        await saveToStorage(
+          convId,
+          finalMessages,
+          threadId,
+          true,
+          result.question,
+          result.options || []
+        );
       } else {
         // Complete - add final response
         const assistantMessage: Message = {
@@ -304,19 +591,52 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
           content: result.content,
           timestamp: new Date().toISOString(),
         };
+        const finalMessages = [...get().messages, assistantMessage];
+        const convId = conversationId || result.conversation_id;
+        
         set({
-          messages: [...get().messages, assistantMessage],
+          messages: finalMessages,
           isLoading: false,
           threadId: null,
           pendingQuestion: null,
           pendingOptions: [],
         });
+
+        // Save to IndexedDB (Requirements: 3.3)
+        await saveToStorage(convId, finalMessages, convId, false, null, []);
+        
         // Refresh conversation list
         get().loadConversations();
       }
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to resume conversation';
-      set({ error: errorMessage, isLoading: false });
+      if (err instanceof CheckpointExpiredError) {
+        // Checkpoint expired - clear interrupt state but keep messages
+        set({
+          checkpointExpired: true,
+          checkpointExpiredMessage: err.message,
+          isWaitingForInput: false,
+          pendingQuestion: null,
+          pendingOptions: [],
+          threadId: null,
+          isLoading: false,
+        });
+        // Update IndexedDB to clear interrupt state
+        if (isStorageAvailable && conversationId) {
+          const storageService = getStorageService();
+          const existing = await storageService.getConversation(conversationId);
+          if (existing) {
+            await storageService.saveConversation({
+              ...existing,
+              is_interrupted: false,
+              pending_question: undefined,
+              pending_options: undefined,
+            });
+          }
+        }
+      } else {
+        const errorMessage = err instanceof Error ? err.message : 'Failed to resume conversation';
+        set({ error: errorMessage, isLoading: false });
+      }
     }
   },
 
@@ -324,9 +644,9 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
   clearConversation: () => {
     const { conversationId } = get();
 
-    // Optionally delete from backend
+    // Optionally delete server checkpoint
     if (conversationId) {
-      apiService.deleteConversation(conversationId).catch(console.error);
+      apiService.deleteCheckpoint(conversationId).catch(console.error);
     }
 
     set({
@@ -346,38 +666,78 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
     set({ error });
   },
 
-  // Load all conversations
+  // Load all conversations from IndexedDB
+  // Requirements: 2.3
   loadConversations: async () => {
+    const { isStorageAvailable } = get();
+    if (!isStorageAvailable) {
+      set({ isLoadingConversations: false });
+      return;
+    }
+
     set({ isLoadingConversations: true });
     try {
-      const response = await apiService.listConversations();
-      set({ conversations: response.conversations, isLoadingConversations: false });
+      const storageService = getStorageService();
+      const summaries = await storageService.listConversations();
+      
+      // Convert StoredConversationSummary to ConversationSummary
+      const conversations: ConversationSummary[] = summaries.map(s => ({
+        id: s.id,
+        title: s.title || undefined,
+        created_at: s.created_at,
+        updated_at: s.updated_at,
+        message_count: s.message_count,
+      }));
+      
+      set({ conversations, isLoadingConversations: false });
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to load conversations';
-      set({ error: errorMessage, isLoadingConversations: false });
+      if (err instanceof StorageError) {
+        set({ storageError: err.message, isLoadingConversations: false });
+      } else {
+        const errorMessage = err instanceof Error ? err.message : 'Failed to load conversations';
+        set({ error: errorMessage, isLoadingConversations: false });
+      }
     }
   },
 
-  // Select and load a conversation
+  // Select and load a conversation from IndexedDB
+  // Requirements: 1.2, 4.1
   selectConversation: async (conversationId: string) => {
+    const { isStorageAvailable } = get();
+    if (!isStorageAvailable) {
+      set({ error: 'Storage is not available' });
+      return;
+    }
+
     set({ isLoading: true, error: null });
     try {
-      const conversation = await apiService.getConversation(conversationId);
+      const storageService = getStorageService();
+      const conversation = await storageService.getConversation(conversationId);
+      
+      if (!conversation) {
+        set({ error: 'Conversation not found', isLoading: false });
+        return;
+      }
+
+      // Convert stored messages to Message type
+      const messages = conversation.messages.map(storedMessageToMessage);
+
       set({
         conversationId: conversation.id,
-        messages: conversation.messages.map((msg) => ({
-          ...msg,
-          id: msg.id.toString(),
-        })),
+        messages,
         isLoading: false,
-        isWaitingForInput: false,
-        pendingQuestion: null,
-        pendingOptions: [],
-        threadId: conversationId, // Use conversation ID as thread ID
+        isWaitingForInput: conversation.is_interrupted,
+        pendingQuestion: conversation.pending_question || null,
+        pendingOptions: conversation.pending_options || [],
+        threadId: conversation.thread_id,
       });
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to load conversation';
-      set({ error: errorMessage, isLoading: false });
+      if (err instanceof StorageError) {
+        set({ storageError: err.message, isLoading: false });
+      } else {
+        const errorMessage = err instanceof Error ? err.message : 'Failed to load conversation';
+        set({ error: errorMessage, isLoading: false });
+      }
     }
   },
 
@@ -392,17 +752,31 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
       pendingQuestion: null,
       pendingOptions: [],
       threadId: null,
+      checkpointExpired: false,
+      checkpointExpiredMessage: null,
     });
   },
 
-  // Delete a conversation
+  // Delete a conversation from IndexedDB and server checkpoint
+  // Requirements: 2.1, 2.2
   deleteConversation: async (conversationId: string) => {
+    const { isStorageAvailable } = get();
+    
     try {
-      await apiService.deleteConversation(conversationId);
+      // Delete from IndexedDB first (Requirements: 2.1)
+      if (isStorageAvailable) {
+        const storageService = getStorageService();
+        await storageService.deleteConversation(conversationId);
+      }
+      
+      // Then delete server checkpoint (Requirements: 2.2)
+      await apiService.deleteCheckpoint(conversationId).catch(console.error);
+      
       const { conversations, conversationId: currentId } = get();
       set({
         conversations: conversations.filter((c) => c.id !== conversationId),
       });
+      
       // If we deleted the current conversation, clear it
       if (currentId === conversationId) {
         set({
@@ -412,8 +786,73 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
         });
       }
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to delete conversation';
-      set({ error: errorMessage });
+      if (err instanceof StorageError) {
+        set({ storageError: err.message });
+      } else {
+        const errorMessage = err instanceof Error ? err.message : 'Failed to delete conversation';
+        set({ error: errorMessage });
+      }
     }
+  },
+
+  // Initialize storage service
+  // Requirements: 1.2, 1.4, 4.1
+  initializeStorage: async () => {
+    // Check storage support on client side only
+    const storageSupported = isStorageSupported();
+    if (!storageSupported) {
+      set({
+        isStorageAvailable: false,
+        storageError: 'Browser storage is not available. Your conversations will not be saved.',
+      });
+      return;
+    }
+
+    try {
+      await initializeStorage();
+      set({ isStorageAvailable: true, storageError: null });
+      
+      // Load conversations after initialization
+      await get().loadConversations();
+      
+      // Check for interrupted conversations and restore state (Requirements: 4.1)
+      const storageService = getStorageService();
+      const interruptedConv = await storageService.findInterruptedConversation();
+      
+      if (interruptedConv) {
+        // Restore the interrupted conversation state
+        const messages = interruptedConv.messages.map(storedMessageToMessage);
+        set({
+          conversationId: interruptedConv.id,
+          messages,
+          isWaitingForInput: true,
+          pendingQuestion: interruptedConv.pending_question || null,
+          pendingOptions: interruptedConv.pending_options || [],
+          threadId: interruptedConv.thread_id,
+        });
+      }
+    } catch (err) {
+      if (err instanceof StorageError) {
+        set({
+          isStorageAvailable: false,
+          storageError: err.message,
+        });
+      } else {
+        set({
+          isStorageAvailable: false,
+          storageError: 'Failed to initialize storage',
+        });
+      }
+    }
+  },
+
+  // Clear storage error
+  clearStorageError: () => {
+    set({ storageError: null });
+  },
+
+  // Clear checkpoint expired state
+  clearCheckpointExpired: () => {
+    set({ checkpointExpired: false, checkpointExpiredMessage: null });
   },
 }));

@@ -1,25 +1,22 @@
 """API routes."""
-from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from ..application.dtos import (
     SendMessageRequest,
     SendMessageResponse,
-    ConversationResponse,
-    ConversationListResponse
+    ResumeConversationRequest,
+    ResumeConversationResponse
 )
 from ..application.use_cases import (
     SendMessageUseCase,
-    GetConversationHistoryUseCase,
-    DeleteConversationUseCase,
-    ListConversationsUseCase
+    DeleteCheckpointUseCase,
+    ResumeConversationUseCase
 )
-from ..domain.exceptions import ConversationNotFoundException, InvalidMessageException
+from ..domain.exceptions import InvalidMessageException, CheckpointNotFoundException
 from .dependencies import (
     get_send_message_use_case,
-    get_conversation_history_use_case,
-    get_delete_conversation_use_case,
-    get_list_conversations_use_case
+    get_delete_checkpoint_use_case,
+    get_resume_conversation_use_case
 )
 
 
@@ -36,8 +33,6 @@ async def send_message(
         return await use_case.execute(request)
     except InvalidMessageException as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except ConversationNotFoundException as e:
-        raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
 
@@ -56,15 +51,8 @@ async def send_message_stream(
         return StreamingResponse(generate(), media_type="text/plain")
     except InvalidMessageException as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except ConversationNotFoundException as e:
-        raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
-
-
-from ..application.dtos import ResumeConversationRequest, ResumeConversationResponse
-from ..application.use_cases import ResumeConversationUseCase
-from .dependencies import get_resume_conversation_use_case
 
 
 @router.post("/resume", response_model=ResumeConversationResponse)
@@ -77,47 +65,30 @@ async def resume_conversation(
         return await use_case.execute(request)
     except InvalidMessageException as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except ConversationNotFoundException as e:
-        raise HTTPException(status_code=404, detail=str(e))
+    except CheckpointNotFoundException as e:
+        raise HTTPException(
+            status_code=404, 
+            detail=f"Checkpoint expired: {str(e)}. The server session has expired and cannot be resumed."
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Resume error: {str(e)}")
 
 
-@router.get("/conversations", response_model=ConversationListResponse)
-async def list_conversations(
-    use_case: ListConversationsUseCase = Depends(get_list_conversations_use_case)
+@router.delete("/checkpoints/{thread_id}")
+async def delete_checkpoint(
+    thread_id: str,
+    use_case: DeleteCheckpointUseCase = Depends(get_delete_checkpoint_use_case)
 ):
-    """List all conversations."""
+    """Delete only the server checkpoint for a conversation.
+    
+    This endpoint is used when conversations are stored client-side (IndexedDB)
+    and we only need to clean up the server checkpoint data.
+    The thread_id is the same as the conversation_id.
+    """
     try:
-        return await use_case.execute()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
-
-
-@router.get("/conversations/{conversation_id}", response_model=ConversationResponse)
-async def get_conversation(
-    conversation_id: UUID,
-    use_case: GetConversationHistoryUseCase = Depends(get_conversation_history_use_case)
-):
-    """Get conversation history."""
-    try:
-        return await use_case.execute(conversation_id)
-    except ConversationNotFoundException as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
-
-
-@router.delete("/conversations/{conversation_id}")
-async def delete_conversation(
-    conversation_id: UUID,
-    use_case: DeleteConversationUseCase = Depends(get_delete_conversation_use_case)
-):
-    """Delete a conversation."""
-    try:
-        deleted = await use_case.execute(conversation_id)
+        deleted = await use_case.execute(thread_id)
         if not deleted:
-            raise HTTPException(status_code=404, detail="Conversation not found")
-        return {"status": "success", "message": "Conversation deleted"}
+            return {"status": "success", "message": "Checkpoint not found or already deleted"}
+        return {"status": "success", "message": "Checkpoint deleted"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")

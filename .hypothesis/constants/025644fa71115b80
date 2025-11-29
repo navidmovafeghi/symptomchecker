@@ -1,0 +1,4 @@
+# file: C:\Users\NAVID\Desktop\learn\backend\src\domain\entities.py
+# hypothesis_version: 6.148.3
+
+['...', 'Conversation', 'assistant', 'content', 'messages', 'role', 'system', 'title', 'updated_at', 'user', 'version']

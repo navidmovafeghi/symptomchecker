@@ -26,12 +26,18 @@ class Conversation(BaseModel):
     messages: List[Message] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+    version: int = 1  # For optimistic locking
+    has_pending_response: bool = False  # Tracks incomplete responses
 
     def add_message(self, message: Message) -> "Conversation":
-        """Add a message and return a new Conversation instance."""
+        """Add a message and return a new Conversation instance.
+        
+        Preserves the version number - version is only incremented on save.
+        """
         updates = {
             "messages": self.messages + [message],
-            "updated_at": datetime.utcnow()
+            "updated_at": datetime.utcnow(),
+            "version": self.version,  # Preserve version
         }
         # Auto-generate title from first user message
         if self.title is None and message.role == "user":

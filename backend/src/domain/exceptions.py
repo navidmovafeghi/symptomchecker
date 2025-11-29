@@ -16,6 +16,11 @@ class LLMProviderException(DomainException):
     pass
 
 
+class CheckpointNotFoundException(DomainException):
+    """Raised when a server checkpoint is not found (expired or deleted)."""
+    pass
+
+
 class InvalidMessageException(DomainException):
     """Raised when a message is invalid."""
     pass

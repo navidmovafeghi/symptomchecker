@@ -26,6 +26,11 @@ export interface Conversation {
 export interface SendMessageRequest {
   conversation_id?: string;
   message: string;
+  /** Full conversation history for LLM context (server doesn't store) */
+  conversation_history?: Array<{
+    role: string;
+    content: string;
+  }>;
 }
 
 export interface SendMessageResponse {
@@ -60,4 +65,16 @@ export interface ConversationSummary {
 /** Response containing list of conversations */
 export interface ConversationListResponse {
   conversations: ConversationSummary[];
+}
+
+/**
+ * Error thrown when a server checkpoint has expired or is missing.
+ * This happens when the LangGraph checkpoint is no longer available
+ * and the conversation cannot be resumed from the exact workflow state.
+ */
+export class CheckpointExpiredError extends Error {
+  constructor(message: string = 'This conversation cannot be resumed. The server session has expired.') {
+    super(message);
+    this.name = 'CheckpointExpiredError';
+  }
 }

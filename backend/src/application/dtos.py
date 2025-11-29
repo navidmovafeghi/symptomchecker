@@ -5,10 +5,20 @@ from pydantic import BaseModel, Field
 from datetime import datetime
 
 
+class HistoryMessage(BaseModel):
+    """A message in conversation history sent from client."""
+    role: str = Field(..., description="Message role: user, assistant, or system")
+    content: str = Field(..., description="Message content")
+
+
 class SendMessageRequest(BaseModel):
     """Request to send a message."""
     conversation_id: UUID | None = None
     message: str = Field(..., min_length=1)
+    conversation_history: Optional[List[HistoryMessage]] = Field(
+        default=None,
+        description="Full conversation history from client-side storage (IndexedDB)"
+    )
 
 
 class MessageResponse(BaseModel):
@@ -26,33 +36,14 @@ class SendMessageResponse(BaseModel):
     assistant_message: MessageResponse
 
 
-class ConversationResponse(BaseModel):
-    """Response representing a conversation."""
-    id: UUID
-    title: Optional[str] = None
-    messages: List[MessageResponse]
-    created_at: datetime
-    updated_at: datetime
-
-
-class ConversationSummary(BaseModel):
-    """Summary of a conversation for listing."""
-    id: UUID
-    title: Optional[str] = None
-    created_at: datetime
-    updated_at: datetime
-    message_count: int
-
-
-class ConversationListResponse(BaseModel):
-    """Response containing list of conversations."""
-    conversations: List[ConversationSummary]
-
-
 class ResumeConversationRequest(BaseModel):
     """Request to resume an interrupted conversation."""
     thread_id: str = Field(..., description="Thread ID (same as conversation_id)")
     user_input: str = Field(..., min_length=1, description="User's response to clarification")
+    conversation_history: Optional[List[HistoryMessage]] = Field(
+        default=None,
+        description="Fallback conversation history if server checkpoint is missing"
+    )
 
 
 class ResumeConversationResponse(BaseModel):

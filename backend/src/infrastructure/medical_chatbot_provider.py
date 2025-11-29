@@ -14,7 +14,7 @@ from langgraph.graph.message import add_messages
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.types import Command, interrupt
 
-from ..domain.interfaces import ILLMProvider
+from ..domain.interfaces import ILLMProvider, ICheckpointManager
 from ..domain.exceptions import LLMProviderException
 
 
@@ -87,7 +87,7 @@ def _extract_text_content(content: Any) -> str:
 
 
 # ============== PROVIDER ==============
-class MedicalChatbotProvider(ILLMProvider):
+class MedicalChatbotProvider(ILLMProvider, ICheckpointManager):
     """Medical chatbot using LangGraph with human-in-the-loop interrupts.
     
     Features:
@@ -97,6 +97,7 @@ class MedicalChatbotProvider(ILLMProvider):
     - Frustration/unclear response detection
     - Per-node model configuration with reasoning support
     - AsyncSqliteSaver for persistent state across server restarts
+    - Checkpoint management for cleanup on conversation deletion
     """
 
     def __init__(self, api_key: str, db_path: str = "checkpoints.db"):
@@ -652,13 +653,27 @@ Be professional and thorough while keeping the response accessible."""
             raise LLMProviderException(f"MedicalChatbotProvider error: {str(e)}")
 
     async def resume(self, thread_id: str, user_input: str) -> Dict[str, Any]:
-        """Resume an interrupted conversation with user's answer."""
+        """Resume an interrupted conversation with user's answer.
+        
+        Raises:
+            CheckpointNotFoundException: If the checkpoint for this thread doesn't exist.
+            LLMProviderException: For other errors during resume.
+        """
+        from ..domain.exceptions import CheckpointNotFoundException
+        
         config = {"configurable": {"thread_id": thread_id}}
 
         try:
             # Use async context manager for SQLite checkpointer
             async with AsyncSqliteSaver.from_conn_string(self.db_path) as checkpointer:
                 graph = self._build_graph(checkpointer)
+                
+                # Check if checkpoint exists before attempting resume
+                checkpoints = [c async for c in checkpointer.alist(config)]
+                if not checkpoints:
+                    raise CheckpointNotFoundException(
+                        f"Checkpoint for thread {thread_id} not found. The session may have expired."
+                    )
 
                 result = await graph.ainvoke(
                     Command(resume=user_input),
@@ -699,3 +714,47 @@ Be professional and thorough while keeping the response accessible."""
 
         except Exception as e:
             raise LLMProviderException(f"MedicalChatbotProvider resume error: {str(e)}")
+
+    # ============== ICheckpointManager INTERFACE ==============
+
+    async def delete_checkpoint(self, thread_id: str) -> bool:
+        """Delete checkpoint data for a thread.
+        
+        Args:
+            thread_id: The unique thread identifier for the checkpoint to delete.
+            
+        Returns:
+            True if the checkpoint was deleted, False if it didn't exist.
+        """
+        try:
+            async with AsyncSqliteSaver.from_conn_string(self.db_path) as checkpointer:
+                # Check if checkpoint exists first by trying to list checkpoints for this thread
+                config = {"configurable": {"thread_id": thread_id}}
+                checkpoints = [c async for c in checkpointer.alist(config)]
+                
+                if not checkpoints:
+                    return False
+                
+                # Delete all checkpoints for this thread
+                # The checkpointer stores data in tables: checkpoints, checkpoint_writes, checkpoint_blobs
+                # We need to delete from all related tables
+                conn = checkpointer.conn
+                await conn.execute(
+                    "DELETE FROM checkpoints WHERE thread_id = ?",
+                    (thread_id,)
+                )
+                await conn.execute(
+                    "DELETE FROM checkpoint_writes WHERE thread_id = ?",
+                    (thread_id,)
+                )
+                await conn.execute(
+                    "DELETE FROM checkpoint_blobs WHERE thread_id = ?",
+                    (thread_id,)
+                )
+                await conn.commit()
+                return True
+        except Exception as e:
+            # Log the error but don't raise - cleanup errors should be handled gracefully
+            import logging
+            logging.warning(f"Failed to delete checkpoint for thread {thread_id}: {str(e)}")
+            return False
