@@ -26,6 +26,7 @@
     "react-dom": "^19.1.1",
     "react-markdown": "^10.1.0",
     "tailwindcss": "^4.1.13",
+    "tailwindcss-animate": "^1.0.7",
     "typescript": "^5.9.3",
     "uuid": "^13.0.0",
     "zustand": "^5.0.8"
