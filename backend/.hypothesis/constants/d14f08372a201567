@@ -1,4 +1,0 @@
-# file: C:\Users\NAVID\Desktop\learn\backend\src\infrastructure\repositories.py
-# hypothesis_version: 6.148.3
-
-['content', 'conversations.db', 'created_at', 'has_pending_response', 'id', 'messages', 'role', 'timestamp', 'title', 'updated_at', 'version']
