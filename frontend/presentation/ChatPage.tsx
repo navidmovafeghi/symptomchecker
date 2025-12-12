@@ -9,6 +9,7 @@ import { useChatViewModel } from '@/viewmodels/useChatViewModel';
 import { Sidebar } from './Sidebar';
 import ReactMarkdown from 'react-markdown';
 import { Menu, X, Bot, User, Send } from 'lucide-react';
+import { MessageSkeleton } from './MessageSkeleton';
 
 export function ChatPage() {
   const {
@@ -18,9 +19,11 @@ export function ChatPage() {
     error,
     sendMessage,
     selectOption,
+    submitMultipleAnswers,
     newConversation,
     isWaitingForInput,
     pendingOptions,
+    pendingQuestions,
     storageError,
     isStorageAvailable,
     clearStorageError,
@@ -47,10 +50,21 @@ export function ChatPage() {
   const [input, setInput] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  // State for multi-question answers
+  const [multiAnswers, setMultiAnswers] = useState<string[]>([]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // Reset multi-answers when pendingQuestions changes
+  useEffect(() => {
+    if (pendingQuestions.length > 0) {
+      setMultiAnswers(new Array(pendingQuestions.length).fill(''));
+    } else {
+      setMultiAnswers([]);
+    }
+  }, [pendingQuestions]);
 
   const handleSend = () => {
     if (input.trim() && !isLoading && !isStreaming) {
@@ -69,6 +83,21 @@ export function ChatPage() {
   const handleOptionClick = async (option: string) => {
     if (!isLoading) {
       await selectOption(option);
+    }
+  };
+
+  const handleMultiAnswerChange = (index: number, value: string) => {
+    setMultiAnswers(prev => {
+      const newAnswers = [...prev];
+      newAnswers[index] = value;
+      return newAnswers;
+    });
+  };
+
+  const handleMultiAnswerSubmit = async () => {
+    if (!isLoading && multiAnswers.every(a => a.trim())) {
+      await submitMultipleAnswers(multiAnswers);
+      setMultiAnswers([]);
     }
   };
 
@@ -231,7 +260,8 @@ export function ChatPage() {
                           )}
                         </div>
 
-                        {message.isQuestion && message.options && message.options.length > 0 && (
+                        {/* Single question with options */}
+                        {message.isQuestion && message.options && message.options.length > 0 && !message.questions && (
                           <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t border-gray-200">
                             {message.options.map((option, idx) => (
                               <button
@@ -245,27 +275,48 @@ export function ChatPage() {
                             ))}
                           </div>
                         )}
+
+                        {/* Multi-question format */}
+                        {message.isQuestion && message.questions && message.questions.length > 0 && (
+                          <div className="mt-4 pt-4 border-t border-gray-200 space-y-4">
+                            {message.questions.map((q, qIdx) => (
+                              <div key={qIdx} className="space-y-2">
+                                <p className="text-sm font-medium text-gray-700">
+                                  {q.question_number}. {q.question}
+                                </p>
+                                <div className="flex flex-wrap gap-2">
+                                  {q.options.map((option, optIdx) => (
+                                    <button
+                                      key={optIdx}
+                                      onClick={() => handleMultiAnswerChange(qIdx, option)}
+                                      disabled={isLoading}
+                                      className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors disabled:opacity-50 ${
+                                        multiAnswers[qIdx] === option
+                                          ? 'bg-blue-600 text-white'
+                                          : 'bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-600'
+                                      }`}
+                                    >
+                                      {option}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            ))}
+                            <button
+                              onClick={handleMultiAnswerSubmit}
+                              disabled={isLoading || !multiAnswers.every(a => a.trim())}
+                              className="mt-4 px-6 py-2 bg-violet-600 hover:bg-violet-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              Submit Answers
+                            </button>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
                 ))}
 
-                {isLoading && !isStreaming && (
-                  <div className="flex w-full justify-start">
-                    <div className="flex max-w-[80%] gap-3">
-                      <div className="w-8 h-8 rounded-full bg-violet-600 flex items-center justify-center text-white flex-shrink-0">
-                        <Bot size={16} />
-                      </div>
-                      <div className="px-4 py-3">
-                        <div className="flex items-center gap-1">
-                          <div className="h-2 w-2 rounded-full bg-gray-400 dot-bounce dot-bounce-1" />
-                          <div className="h-2 w-2 rounded-full bg-gray-400 dot-bounce dot-bounce-2" />
-                          <div className="h-2 w-2 rounded-full bg-gray-400 dot-bounce dot-bounce-3" />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
+                {isLoading && !isStreaming && <MessageSkeleton />}
 
                 <div ref={messagesEndRef} />
               </>
@@ -281,7 +332,13 @@ export function ChatPage() {
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
                 disabled={isLoading || isStreaming}
-                placeholder={isWaitingForInput && pendingOptions.length > 0 ? "Select an option or type..." : "Type a message..."}
+                placeholder={
+                  isWaitingForInput && pendingQuestions.length > 0 
+                    ? "Please answer the questions above..." 
+                    : isWaitingForInput && pendingOptions.length > 0 
+                      ? "Select an option or type..." 
+                      : "Type a message..."
+                }
                 className="flex-1 bg-transparent border-none outline-none text-gray-800 placeholder:text-gray-400 text-sm py-2"
                 data-testid="chat-input"
               />

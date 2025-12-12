@@ -28,6 +28,15 @@ export class StorageError extends Error {
 }
 
 /**
+ * Question with options for multi-question mode.
+ */
+export interface StoredQuestionWithOptions {
+  question: string;
+  options: string[];
+  question_number: number;
+}
+
+/**
  * Stored message structure in IndexedDB.
  */
 export interface StoredMessage {
@@ -37,6 +46,8 @@ export interface StoredMessage {
   timestamp: string;
   options?: string[];
   isQuestion?: boolean;
+  /** Multiple questions with options (multi-question mode) */
+  questions?: StoredQuestionWithOptions[];
 }
 
 /**
@@ -53,6 +64,8 @@ export interface StoredConversation {
   is_interrupted: boolean;
   pending_question?: string;
   pending_options?: string[];
+  /** Multiple pending questions (multi-question mode) */
+  pending_questions?: StoredQuestionWithOptions[];
 }
 
 /**

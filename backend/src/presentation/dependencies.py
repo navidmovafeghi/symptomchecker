@@ -1,6 +1,6 @@
 """Dependency injection container."""
 from functools import lru_cache
-from ..infrastructure.medical_chatbot_provider import MedicalChatbotProvider
+from ..infrastructure.symptom_checker_provider import SymptomCheckerProvider
 from ..application.use_cases import (
     SendMessageUseCase,
     DeleteCheckpointUseCase,
@@ -10,13 +10,14 @@ from .config import settings
 
 
 def _create_llm_provider():
-    """Factory function to create the appropriate LLM provider."""
-    if settings.llm_provider == "openai":
-        if not settings.openai_api_key:
-            raise ValueError("OPENAI_API_KEY is required when llm_provider is 'openai'")
-        return MedicalChatbotProvider(api_key=settings.openai_api_key)
-    else:
-        raise ValueError(f"Unknown llm_provider: {settings.llm_provider}. Only 'openai' is supported.")
+    """Factory function to create the LLM provider."""
+    if not settings.openai_api_key:
+        raise ValueError("OPENAI_API_KEY is required")
+    
+    return SymptomCheckerProvider(
+        api_key=settings.openai_api_key,
+        checkpoint_db_path=settings.checkpoint_db_path,
+    )
 
 _llm_provider = _create_llm_provider()
 
@@ -30,8 +31,7 @@ def get_llm_provider():
 def get_checkpoint_manager():
     """Get checkpoint manager instance.
     
-    The MedicalChatbotProvider implements ICheckpointManager,
-    so we can use the same instance for checkpoint management.
+    SymptomCheckerProvider implements ICheckpointManager for checkpoint management.
     """
     return _llm_provider
 
@@ -46,6 +46,6 @@ def get_resume_conversation_use_case() -> ResumeConversationUseCase:
     return ResumeConversationUseCase(llm_provider=get_llm_provider())
 
 
-def get_delete_checkpoint_use_case() -> DeleteCheckpointUseCase:
+def get_delete_checkpoint_use_case():
     """Get DeleteCheckpointUseCase instance for checkpoint-only deletion."""
     return DeleteCheckpointUseCase(checkpoint_manager=get_checkpoint_manager())

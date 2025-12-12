@@ -9,10 +9,12 @@ export interface Message {
   role: MessageRole;
   content: string;
   timestamp: string;
-  /** Optional answer options for interactive questions */
+  /** Optional answer options for interactive questions (single question mode) */
   options?: string[];
   /** Whether this message is waiting for user selection */
   isQuestion?: boolean;
+  /** Multiple questions with options (multi-question mode) */
+  questions?: QuestionWithOptions[];
 }
 
 export interface Conversation {
@@ -39,11 +41,24 @@ export interface SendMessageResponse {
   assistant_message: Message;
 }
 
+/** Single question with options */
+export interface QuestionWithOptions {
+  question: string;
+  options: string[];
+  question_number: number;
+}
+
 /** Interrupt response from backend when clarification is needed */
 export interface InterruptResponse {
   type: 'interrupt';
-  question: string;
-  options: string[];
+  /** Single question (for refinement questions) */
+  question?: string;
+  /** Options for single question */
+  options?: string[];
+  /** Multiple questions (for preliminary questions) */
+  questions?: QuestionWithOptions[];
+  /** Total number of questions (for multi-question mode) */
+  total_questions?: number;
   thread_id: string;
 }
 

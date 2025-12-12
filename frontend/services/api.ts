@@ -50,7 +50,7 @@ class ApiService {
     onChunk: (chunk: string) => void
   ): Promise<
     | { type: 'complete'; conversationId?: string }
-    | { type: 'interrupt'; question: string; options: string[]; threadId: string; conversationId?: string }
+    | { type: 'interrupt'; question?: string; options?: string[]; questions?: Array<{ question: string; options: string[]; question_number: number }>; totalQuestions?: number; threadId: string; conversationId?: string }
   > {
     // Build request body, including conversation_history if provided
     const requestBody: SendMessageRequest = {
@@ -108,14 +108,26 @@ class ApiService {
         try {
           const parsed = JSON.parse(buffer);
           if (parsed.type === 'interrupt') {
-            // Interrupt detected!
-            return {
-              type: 'interrupt',
-              question: parsed.question,
-              options: parsed.options || [],
-              threadId: parsed.thread_id,
-              conversationId,
-            };
+            // Interrupt detected - handle both single and multi-question formats
+            if (parsed.questions) {
+              // Multi-question format (preliminary questions)
+              return {
+                type: 'interrupt',
+                questions: parsed.questions,
+                totalQuestions: parsed.total_questions,
+                threadId: parsed.thread_id,
+                conversationId,
+              };
+            } else {
+              // Single question format (refinement questions)
+              return {
+                type: 'interrupt',
+                question: parsed.question,
+                options: parsed.options || [],
+                threadId: parsed.thread_id,
+                conversationId,
+              };
+            }
           }
           buffer = ''; // Clear buffer if successfully parsed
         } catch {
@@ -140,11 +152,16 @@ class ApiService {
    */
   async resumeConversation(
     threadId: string,
-    userInput: string
+    userInput: string | string[]
   ): Promise<
     | { type: 'complete'; content: string; conversation_id: string }
-    | { type: 'interrupt'; question: string; options: string[]; conversation_id: string }
+    | { type: 'interrupt'; question?: string; options?: string[]; questions?: Array<{ question: string; options: string[]; question_number: number }>; total_questions?: number; conversation_id: string }
   > {
+    // For multi-question mode, send answers as JSON array
+    const userInputPayload = Array.isArray(userInput) 
+      ? JSON.stringify({ answers: userInput })
+      : userInput;
+
     const response = await fetch(`${this.baseUrl}/api/chat/resume`, {
       method: 'POST',
       headers: {
@@ -152,7 +169,7 @@ class ApiService {
       },
       body: JSON.stringify({
         thread_id: threadId,
-        user_input: userInput,
+        user_input: userInputPayload,
       }),
     });
 

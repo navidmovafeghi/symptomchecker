@@ -11,6 +11,7 @@ export type {
   StoredMessage,
   StoredConversationSummary,
   StorageErrorCode,
+  StoredQuestionWithOptions,
 } from './types';
 export { StorageError } from './types';
 

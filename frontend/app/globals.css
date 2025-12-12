@@ -116,6 +116,49 @@ body {
   animation-delay: 0.4s;
 }
 
+/* Skeleton shimmer animation */
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.skeleton-shimmer {
+  background: linear-gradient(
+    90deg,
+    #e5e7eb 0%,
+    #f3f4f6 50%,
+    #e5e7eb 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+
+.skeleton-shimmer.delay-75 {
+  animation-delay: 0.075s;
+}
+
+.skeleton-shimmer.delay-150 {
+  animation-delay: 0.15s;
+}
+
+/* Fade in animation for skeleton */
+.animate-fade-in {
+  animation: fadeIn 0.2s ease-out;
+}
+
+/* Thinking text styling */
+.thinking-text {
+  font-style: italic;
+}
+
+.thinking-dots span {
+  display: inline-block;
+}
+
 /* Smooth transitions for interactive elements */
 .transition-subtle {
   transition: all 0.2s ease;

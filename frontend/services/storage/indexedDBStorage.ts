@@ -176,6 +176,7 @@ export class IndexedDBStorageService implements IStorageService {
 
   /**
    * Validate that a message has all required fields.
+   * Supports both single-question (options) and multi-question (questions) formats.
    */
   private validateMessage(data: unknown): boolean {
     if (!data || typeof data !== 'object') {
@@ -198,6 +199,24 @@ export class IndexedDBStorageService implements IStorageService {
 
     if (typeof msg.timestamp !== 'string' || !msg.timestamp) {
       return false;
+    }
+
+    // Validate questions array if present (multi-question mode)
+    if (msg.questions !== undefined) {
+      if (!Array.isArray(msg.questions)) {
+        return false;
+      }
+      for (const q of msg.questions) {
+        if (!q || typeof q !== 'object') {
+          return false;
+        }
+        if (typeof q.question !== 'string') {
+          return false;
+        }
+        if (!Array.isArray(q.options)) {
+          return false;
+        }
+      }
     }
 
     return true;

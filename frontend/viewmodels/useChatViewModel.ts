@@ -7,7 +7,7 @@
  */
 
 import { create } from 'zustand';
-import { Message, ConversationSummary, CheckpointExpiredError } from '@/types';
+import { Message, ConversationSummary, CheckpointExpiredError, QuestionWithOptions } from '@/types';
 import { apiService } from '@/services/api';
 import {
   getStorageService,
@@ -16,6 +16,7 @@ import {
   StorageError,
   StoredConversation,
   StoredMessage,
+  StoredQuestionWithOptions,
 } from '@/services/storage';
 
 interface ChatState {
@@ -35,6 +36,8 @@ interface ChatState {
   isWaitingForInput: boolean;
   pendingQuestion: string | null;
   pendingOptions: string[];
+  /** Multiple pending questions (multi-question mode) */
+  pendingQuestions: QuestionWithOptions[];
   threadId: string | null;
 
   // Storage state (NEW - Requirements: 1.4)
@@ -47,6 +50,8 @@ interface ChatState {
   sendMessage: (content: string, useStreaming?: boolean) => Promise<void>;
   resumeConversation: (userInput: string) => Promise<void>;
   selectOption: (option: string) => Promise<void>;
+  /** Submit answers to multiple questions at once */
+  submitMultipleAnswers: (answers: string[]) => Promise<void>;
   clearConversation: () => void;
   setError: (error: string | null) => void;
   
@@ -73,6 +78,7 @@ function messageToStoredMessage(msg: Message): StoredMessage {
     timestamp: msg.timestamp,
     options: msg.options,
     isQuestion: msg.isQuestion,
+    questions: msg.questions,
   };
 }
 
@@ -87,6 +93,18 @@ function storedMessageToMessage(msg: StoredMessage): Message {
     timestamp: msg.timestamp,
     options: msg.options,
     isQuestion: msg.isQuestion,
+    questions: msg.questions,
+  };
+}
+
+/**
+ * Helper function to convert QuestionWithOptions to StoredQuestionWithOptions.
+ */
+function questionToStoredQuestion(q: QuestionWithOptions): StoredQuestionWithOptions {
+  return {
+    question: q.question,
+    options: q.options,
+    question_number: q.question_number,
   };
 }
 
@@ -110,6 +128,7 @@ function buildStoredConversation(
   isInterrupted: boolean,
   pendingQuestion: string | null,
   pendingOptions: string[],
+  pendingQuestions: QuestionWithOptions[],
   existingCreatedAt?: string
 ): StoredConversation {
   const now = new Date().toISOString();
@@ -124,6 +143,7 @@ function buildStoredConversation(
     is_interrupted: isInterrupted,
     pending_question: pendingQuestion || undefined,
     pending_options: pendingOptions.length > 0 ? pendingOptions : undefined,
+    pending_questions: pendingQuestions.length > 0 ? pendingQuestions.map(questionToStoredQuestion) : undefined,
   };
 }
 
@@ -144,6 +164,7 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
   isWaitingForInput: false,
   pendingQuestion: null,
   pendingOptions: [],
+  pendingQuestions: [],
   threadId: null,
 
   // Storage state (NEW - Requirements: 1.4)
@@ -182,10 +203,11 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
     const saveToStorage = async (
       convId: string,
       msgs: Message[],
-      threadId: string | null,
+      tId: string | null,
       isInterrupted: boolean,
       pendingQ: string | null,
-      pendingOpts: string[]
+      pendingOpts: string[],
+      pendingQs: QuestionWithOptions[] = []
     ) => {
       if (!isStorageAvailable) return;
       
@@ -196,10 +218,11 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
         const storedConv = buildStoredConversation(
           convId,
           msgs,
-          threadId,
+          tId,
           isInterrupted,
           pendingQ,
           pendingOpts,
+          pendingQs,
           existing?.created_at
         );
         await storageService.saveConversation(storedConv);
@@ -214,19 +237,9 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
 
     try {
       if (useStreaming) {
-        // Streaming mode
-        set({ isStreaming: true, currentStreamingMessage: '' });
-
-        // Add placeholder for assistant message
-        const tempAssistantMessage: Message = {
-          id: `temp-assistant-${Date.now()}`,
-          role: 'assistant',
-          content: '',
-          timestamp: new Date().toISOString(),
-        };
-        set({ messages: [...get().messages, tempAssistantMessage] });
-
+        // Streaming mode - don't set isStreaming yet, let skeleton show first
         let fullResponse = '';
+        let streamingStarted = false;
 
         const result = await apiService.sendMessageStream(
           {
@@ -234,6 +247,21 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
             message: content.trim(),
           },
           (chunk) => {
+            // On first chunk, transition from skeleton to streaming
+            if (!streamingStarted) {
+              streamingStarted = true;
+              set({ isStreaming: true, currentStreamingMessage: '' });
+              
+              // Add placeholder for assistant message
+              const tempAssistantMessage: Message = {
+                id: `temp-assistant-${Date.now()}`,
+                role: 'assistant',
+                content: '',
+                timestamp: new Date().toISOString(),
+              };
+              set({ messages: [...get().messages, tempAssistantMessage] });
+            }
+
             fullResponse += chunk;
             set({ currentStreamingMessage: fullResponse });
 
@@ -250,28 +278,75 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
 
         // Check if we got an interrupt
         if (result.type === 'interrupt') {
-          // Remove the placeholder assistant message
+          // Remove the placeholder assistant message only if streaming started
           const currentMessages = get().messages;
-          const messagesWithoutPlaceholder = currentMessages.slice(0, -1);
+          const messagesWithoutPlaceholder = streamingStarted 
+            ? currentMessages.slice(0, -1) 
+            : currentMessages;
 
-          // Add the question as an assistant message with options
+          const finalConvId = result.conversationId || conversationId || `conv-${Date.now()}`;
+
+          // Handle multi-question format (preliminary questions)
+          if (result.questions && result.questions.length > 0) {
+            // Create a message showing all questions
+            const questionsText = result.questions
+              .map((q, i) => `${i + 1}. ${q.question}`)
+              .join('\n\n');
+            
+            const questionMessage: Message = {
+              id: `question-${Date.now()}`,
+              role: 'assistant',
+              content: `Please answer the following questions:\n\n${questionsText}`,
+              timestamp: new Date().toISOString(),
+              questions: result.questions,
+              isQuestion: true,
+            };
+
+            const finalMessages = [...messagesWithoutPlaceholder, questionMessage];
+
+            set({
+              messages: finalMessages,
+              isWaitingForInput: true,
+              pendingQuestion: null,
+              pendingOptions: [],
+              pendingQuestions: result.questions,
+              threadId: result.threadId,
+              conversationId: finalConvId,
+              isStreaming: false,
+              isLoading: false,
+            });
+
+            // Save to IndexedDB with interrupt state
+            await saveToStorage(
+              finalConvId,
+              finalMessages,
+              result.threadId,
+              true,
+              null,
+              [],
+              result.questions
+            );
+            return;
+          }
+
+          // Handle single question format (refinement questions)
           const questionMessage: Message = {
             id: `question-${Date.now()}`,
             role: 'assistant',
-            content: result.question,
+            content: result.question || '',
             timestamp: new Date().toISOString(),
             options: result.options,
             isQuestion: true,
           };
 
           const finalMessages = [...messagesWithoutPlaceholder, questionMessage];
-          const finalConvId = result.conversationId || conversationId || `conv-${Date.now()}`;
 
           set({
             messages: finalMessages,
             isWaitingForInput: true,
-            pendingQuestion: result.question,
-            pendingOptions: result.options,
+            pendingQuestion: result.question || null,
+            pendingOptions: result.options || [],
+            pendingQuestions: [],
             threadId: result.threadId,
             conversationId: finalConvId,
             isStreaming: false,
@@ -284,8 +359,9 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
             finalMessages,
             result.threadId,
             true,
-            result.question,
-            result.options
+            result.question || null,
+            result.options || [],
+            []
           );
           return;
         }
@@ -300,7 +376,7 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
 
         // Save to IndexedDB after AI response (Requirements: 1.1, 1.3, 3.2)
         const finalMessages = get().messages;
-        await saveToStorage(finalConvId, finalMessages, finalConvId, false, null, []);
+        await saveToStorage(finalConvId, finalMessages, finalConvId, false, null, [], []);
       } else {
         // Non-streaming mode
         const response = await apiService.sendMessage({
@@ -324,6 +400,7 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
           response.conversation_id,
           false,
           null,
+          [],
           []
         );
       }
@@ -350,11 +427,11 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
       return;
     }
 
-    set({ isLoading: true, error: null, isWaitingForInput: false, pendingOptions: [] });
+    set({ isLoading: true, error: null, isWaitingForInput: false, pendingOptions: [], pendingQuestions: [] });
 
     // Mark the question message as no longer waiting
     const updatedMessages = messages.map((msg) =>
-      msg.isQuestion ? { ...msg, isQuestion: false, options: undefined } : msg
+      msg.isQuestion ? { ...msg, isQuestion: false, options: undefined, questions: undefined } : msg
     );
 
     // Add user's selected option as a message
@@ -374,7 +451,8 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
       tId: string | null,
       isInterrupted: boolean,
       pendingQ: string | null,
-      pendingOpts: string[]
+      pendingOpts: string[],
+      pendingQs: QuestionWithOptions[] = []
     ) => {
       if (!isStorageAvailable || !convId) return;
       
@@ -388,6 +466,7 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
           isInterrupted,
           pendingQ,
           pendingOpts,
+          pendingQs,
           existing?.created_at
         );
         await storageService.saveConversation(storedConv);
@@ -404,23 +483,54 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
       const result = await apiService.resumeConversation(threadId, option);
 
       if (result.type === 'interrupt') {
-        // Another interrupt - add new question message with options
+        const convId = conversationId || result.conversation_id;
+
+        // Handle multi-question format
+        if (result.questions && result.questions.length > 0) {
+          const questionsText = result.questions
+            .map((q, i) => `${i + 1}. ${q.question}`)
+            .join('\n\n');
+          
+          const questionMessage: Message = {
+            id: `question-${Date.now()}`,
+            role: 'assistant',
+            content: `Please answer the following questions:\n\n${questionsText}`,
+            timestamp: new Date().toISOString(),
+            questions: result.questions,
+            isQuestion: true,
+          };
+          const finalMessages = [...get().messages, questionMessage];
+          
+          set({
+            messages: finalMessages,
+            isWaitingForInput: true,
+            pendingQuestion: null,
+            pendingOptions: [],
+            pendingQuestions: result.questions,
+            isLoading: false,
+          });
+
+          await saveToStorage(convId, finalMessages, threadId, true, null, [], result.questions);
+          return;
+        }
+
+        // Handle single question format
         const questionMessage: Message = {
           id: `question-${Date.now()}`,
           role: 'assistant',
-          content: result.question,
+          content: result.question || '',
           timestamp: new Date().toISOString(),
           options: result.options,
           isQuestion: true,
         };
         const finalMessages = [...get().messages, questionMessage];
-        const convId = conversationId || result.conversation_id;
         
         set({
           messages: finalMessages,
           isWaitingForInput: true,
-          pendingQuestion: result.question,
+          pendingQuestion: result.question || null,
           pendingOptions: result.options || [],
+          pendingQuestions: [],
           isLoading: false,
         });
 
@@ -430,8 +540,9 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
           finalMessages,
           threadId,
           true,
-          result.question,
-          result.options || []
+          result.question || null,
+          result.options || [],
+          []
         );
       } else {
         // Complete - add final response
@@ -450,10 +561,11 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
           threadId: null,
           pendingQuestion: null,
           pendingOptions: [],
+          pendingQuestions: [],
         });
 
         // Save to IndexedDB (Requirements: 3.3)
-        await saveToStorage(convId, finalMessages, convId, false, null, []);
+        await saveToStorage(convId, finalMessages, convId, false, null, [], []);
         
         // Refresh conversation list
         get().loadConversations();
@@ -500,11 +612,11 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
       return;
     }
 
-    set({ isLoading: true, error: null, isWaitingForInput: false, pendingOptions: [] });
+    set({ isLoading: true, error: null, isWaitingForInput: false, pendingOptions: [], pendingQuestions: [] });
 
     // Mark the question message as no longer waiting
     const updatedMessages = messages.map((msg) =>
-      msg.isQuestion ? { ...msg, isQuestion: false, options: undefined } : msg
+      msg.isQuestion ? { ...msg, isQuestion: false, options: undefined, questions: undefined } : msg
     );
 
     // Add user's answer to messages
@@ -524,7 +636,8 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
       tId: string | null,
       isInterrupted: boolean,
       pendingQ: string | null,
-      pendingOpts: string[]
+      pendingOpts: string[],
+      pendingQs: QuestionWithOptions[] = []
     ) => {
       if (!isStorageAvailable || !convId) return;
       
@@ -538,6 +651,7 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
           isInterrupted,
           pendingQ,
           pendingOpts,
+          pendingQs,
           existing?.created_at
         );
         await storageService.saveConversation(storedConv);
@@ -554,23 +668,54 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
       const result = await apiService.resumeConversation(threadId, userInput);
 
       if (result.type === 'interrupt') {
-        // Another interrupt - add new question message with options
+        const convId = conversationId || result.conversation_id;
+
+        // Handle multi-question format
+        if (result.questions && result.questions.length > 0) {
+          const questionsText = result.questions
+            .map((q, i) => `${i + 1}. ${q.question}`)
+            .join('\n\n');
+          
+          const questionMessage: Message = {
+            id: `question-${Date.now()}`,
+            role: 'assistant',
+            content: `Please answer the following questions:\n\n${questionsText}`,
+            timestamp: new Date().toISOString(),
+            questions: result.questions,
+            isQuestion: true,
+          };
+          const finalMessages = [...get().messages, questionMessage];
+          
+          set({
+            messages: finalMessages,
+            isWaitingForInput: true,
+            pendingQuestion: null,
+            pendingOptions: [],
+            pendingQuestions: result.questions,
+            isLoading: false,
+          });
+
+          await saveToStorage(convId, finalMessages, threadId, true, null, [], result.questions);
+          return;
+        }
+
+        // Handle single question format
         const questionMessage: Message = {
           id: `question-${Date.now()}`,
           role: 'assistant',
-          content: result.question,
+          content: result.question || '',
           timestamp: new Date().toISOString(),
           options: result.options,
           isQuestion: true,
         };
         const finalMessages = [...get().messages, questionMessage];
-        const convId = conversationId || result.conversation_id;
         
         set({
           messages: finalMessages,
           isWaitingForInput: true,
-          pendingQuestion: result.question,
+          pendingQuestion: result.question || null,
           pendingOptions: result.options || [],
+          pendingQuestions: [],
           isLoading: false,
         });
 
@@ -580,8 +725,9 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
           finalMessages,
           threadId,
           true,
-          result.question,
-          result.options || []
+          result.question || null,
+          result.options || [],
+          []
         );
       } else {
         // Complete - add final response
@@ -600,10 +746,11 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
           threadId: null,
           pendingQuestion: null,
           pendingOptions: [],
+          pendingQuestions: [],
         });
 
         // Save to IndexedDB (Requirements: 3.3)
-        await saveToStorage(convId, finalMessages, convId, false, null, []);
+        await saveToStorage(convId, finalMessages, convId, false, null, [], []);
         
         // Refresh conversation list
         get().loadConversations();
@@ -617,6 +764,7 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
           isWaitingForInput: false,
           pendingQuestion: null,
           pendingOptions: [],
+          pendingQuestions: [],
           threadId: null,
           isLoading: false,
         });
@@ -630,11 +778,189 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
               is_interrupted: false,
               pending_question: undefined,
               pending_options: undefined,
+              pending_questions: undefined,
             });
           }
         }
       } else {
         const errorMessage = err instanceof Error ? err.message : 'Failed to resume conversation';
+        set({ error: errorMessage, isLoading: false });
+      }
+    }
+  },
+
+  // Submit multiple answers at once (for multi-question mode)
+  submitMultipleAnswers: async (answers: string[]) => {
+    const { threadId, messages, conversationId, isStorageAvailable, pendingQuestions } = get();
+
+    if (!threadId) {
+      set({ error: 'No active conversation to resume' });
+      return;
+    }
+
+    set({ isLoading: true, error: null, isWaitingForInput: false, pendingOptions: [], pendingQuestions: [] });
+
+    // Mark the question message as no longer waiting
+    const updatedMessages = messages.map((msg) =>
+      msg.isQuestion ? { ...msg, isQuestion: false, options: undefined, questions: undefined } : msg
+    );
+
+    // Add user's answers as a single message
+    const answersText = pendingQuestions.length > 0
+      ? pendingQuestions.map((q, i) => `${i + 1}. ${answers[i] || 'Not answered'}`).join('\n')
+      : answers.join('\n');
+    
+    const userMessage: Message = {
+      id: `user-${Date.now()}`,
+      role: 'user',
+      content: answersText,
+      timestamp: new Date().toISOString(),
+    };
+    const messagesWithUser = [...updatedMessages, userMessage];
+    set({ messages: messagesWithUser });
+
+    // Helper to save conversation to IndexedDB
+    const saveToStorage = async (
+      convId: string,
+      msgs: Message[],
+      tId: string | null,
+      isInterrupted: boolean,
+      pendingQ: string | null,
+      pendingOpts: string[],
+      pendingQs: QuestionWithOptions[] = []
+    ) => {
+      if (!isStorageAvailable || !convId) return;
+      
+      try {
+        const storageService = getStorageService();
+        const existing = await storageService.getConversation(convId);
+        const storedConv = buildStoredConversation(
+          convId,
+          msgs,
+          tId,
+          isInterrupted,
+          pendingQ,
+          pendingOpts,
+          pendingQs,
+          existing?.created_at
+        );
+        await storageService.saveConversation(storedConv);
+      } catch (err) {
+        if (err instanceof StorageError) {
+          set({ storageError: err.message });
+        } else {
+          console.error('Failed to save conversation to storage:', err);
+        }
+      }
+    };
+
+    try {
+      // Send answers as array for multi-question mode
+      const result = await apiService.resumeConversation(threadId, answers);
+
+      if (result.type === 'interrupt') {
+        const convId = conversationId || result.conversation_id;
+
+        // Handle multi-question format
+        if (result.questions && result.questions.length > 0) {
+          const questionsText = result.questions
+            .map((q, i) => `${i + 1}. ${q.question}`)
+            .join('\n\n');
+          
+          const questionMessage: Message = {
+            id: `question-${Date.now()}`,
+            role: 'assistant',
+            content: `Please answer the following questions:\n\n${questionsText}`,
+            timestamp: new Date().toISOString(),
+            questions: result.questions,
+            isQuestion: true,
+          };
+          const finalMessages = [...get().messages, questionMessage];
+          
+          set({
+            messages: finalMessages,
+            isWaitingForInput: true,
+            pendingQuestion: null,
+            pendingOptions: [],
+            pendingQuestions: result.questions,
+            isLoading: false,
+          });
+
+          await saveToStorage(convId, finalMessages, threadId, true, null, [], result.questions);
+          return;
+        }
+
+        // Handle single question format (refinement)
+        const questionMessage: Message = {
+          id: `question-${Date.now()}`,
+          role: 'assistant',
+          content: result.question || '',
+          timestamp: new Date().toISOString(),
+          options: result.options,
+          isQuestion: true,
+        };
+        const finalMessages = [...get().messages, questionMessage];
+        
+        set({
+          messages: finalMessages,
+          isWaitingForInput: true,
+          pendingQuestion: result.question || null,
+          pendingOptions: result.options || [],
+          pendingQuestions: [],
+          isLoading: false,
+        });
+
+        await saveToStorage(convId, finalMessages, threadId, true, result.question || null, result.options || [], []);
+      } else {
+        // Complete - add final response
+        const assistantMessage: Message = {
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          content: result.content,
+          timestamp: new Date().toISOString(),
+        };
+        const finalMessages = [...get().messages, assistantMessage];
+        const convId = conversationId || result.conversation_id;
+        
+        set({
+          messages: finalMessages,
+          isLoading: false,
+          threadId: null,
+          pendingQuestion: null,
+          pendingOptions: [],
+          pendingQuestions: [],
+        });
+
+        await saveToStorage(convId, finalMessages, convId, false, null, [], []);
+        get().loadConversations();
+      }
+    } catch (err) {
+      if (err instanceof CheckpointExpiredError) {
+        set({
+          checkpointExpired: true,
+          checkpointExpiredMessage: err.message,
+          isWaitingForInput: false,
+          pendingQuestion: null,
+          pendingOptions: [],
+          pendingQuestions: [],
+          threadId: null,
+          isLoading: false,
+        });
+        if (isStorageAvailable && conversationId) {
+          const storageService = getStorageService();
+          const existing = await storageService.getConversation(conversationId);
+          if (existing) {
+            await storageService.saveConversation({
+              ...existing,
+              is_interrupted: false,
+              pending_question: undefined,
+              pending_options: undefined,
+              pending_questions: undefined,
+            });
+          }
+        }
+      } else {
+        const errorMessage = err instanceof Error ? err.message : 'Failed to submit answers';
         set({ error: errorMessage, isLoading: false });
       }
     }
@@ -657,6 +983,7 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
       isWaitingForInput: false,
       pendingQuestion: null,
       pendingOptions: [],
+      pendingQuestions: [],
       threadId: null,
     });
   },
@@ -729,6 +1056,7 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
         isWaitingForInput: conversation.is_interrupted,
         pendingQuestion: conversation.pending_question || null,
         pendingOptions: conversation.pending_options || [],
+        pendingQuestions: conversation.pending_questions || [],
         threadId: conversation.thread_id,
       });
     } catch (err) {
@@ -751,6 +1079,7 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
       isWaitingForInput: false,
       pendingQuestion: null,
       pendingOptions: [],
+      pendingQuestions: [],
       threadId: null,
       checkpointExpired: false,
       checkpointExpiredMessage: null,
@@ -828,6 +1157,7 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
           isWaitingForInput: true,
           pendingQuestion: interruptedConv.pending_question || null,
           pendingOptions: interruptedConv.pending_options || [],
+          pendingQuestions: interruptedConv.pending_questions || [],
           threadId: interruptedConv.thread_id,
         });
       }
