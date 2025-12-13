@@ -1,0 +1,132 @@
+# Implementation Plan
+
+- [ ] 1. Set up localization infrastructure
+  - [ ] 1.1 Create translation files structure
+    - Create `frontend/locales/en.json` with all UI text keys
+    - Create `frontend/locales/fa.json` with Persian translations
+    - Include keys for: common actions, chat UI, medical terms, errors
+    - _Requirements: 1.1, 7.1_
+  - [ ] 1.2 Create LocaleContext and provider
+    - Create `frontend/contexts/LocaleContext.tsx`
+    - Implement locale state management with 'en' and 'fa' support
+    - Implement `t()` translation function with parameter interpolation
+    - Implement localStorage persistence for language preference
+    - _Requirements: 1.1, 1.2, 1.4_
+  - [ ] 1.3 Write property test for locale persistence round-trip
+    - **Property 2: Language preference persistence round-trip**
+    - **Validates: Requirements 1.4**
+  - [ ] 1.4 Write property test for translation fallback
+    - **Property 1: Translation completeness**
+    - **Validates: Requirements 7.2**
+
+- [ ] 2. Implement RTL layout support
+  - [ ] 2.1 Add RTL CSS utilities and Tailwind configuration
+    - Configure Tailwind for RTL support with logical properties
+    - Add RTL-specific CSS classes for layout mirroring
+    - Add `dir` attribute handling to root layout
+    - _Requirements: 2.1, 2.2_
+  - [ ] 2.2 Update layout.tsx for RTL support
+    - Wrap app with LocaleProvider
+    - Set `dir` attribute based on locale
+    - Add Persian font (Vazirmatn) loading
+    - _Requirements: 2.1, 6.3_
+  - [ ] 2.3 Write property test for RTL direction consistency
+    - **Property 3: RTL direction consistency**
+    - **Validates: Requirements 2.1**
+
+- [ ] 3. Implement formatting utilities
+  - [ ] 3.1 Create date formatting utility
+    - Implement `formatDate()` function in LocaleContext
+    - Support Persian date formatting (localized Gregorian)
+    - Handle timestamp strings and Date objects
+    - _Requirements: 4.1_
+  - [ ] 3.2 Create number formatting utilities
+    - Implement `formatNumber()` with Persian numeral support
+    - Implement `formatPercent()` for diagnosis confidence display
+    - Add option for Persian numerals (۰۱۲۳۴۵۶۷۸۹)
+    - _Requirements: 4.2, 4.3_
+  - [ ] 3.3 Write property test for Persian numeral conversion
+    - **Property 4: Persian numeral conversion**
+    - **Validates: Requirements 4.2**
+  - [ ] 3.4 Write property test for date formatting
+    - **Property 5: Date formatting locale consistency**
+    - **Validates: Requirements 4.1**
+
+- [ ] 4. Checkpoint - Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+
+- [ ] 5. Create LanguageSwitcher component
+  - [ ] 5.1 Implement LanguageSwitcher UI component
+    - Create `frontend/presentation/LanguageSwitcher.tsx`
+    - Display current language with dropdown/toggle
+    - Support keyboard navigation for accessibility
+    - _Requirements: 5.1, 5.2_
+  - [ ] 5.2 Integrate LanguageSwitcher into Sidebar
+    - Add LanguageSwitcher to Sidebar component
+    - Position appropriately for both LTR and RTL layouts
+    - _Requirements: 5.1_
+  - [ ] 5.3 Write property test for language change reactivity
+    - **Property 7: Language change reactivity**
+    - **Validates: Requirements 5.3, 5.4**
+
+- [ ] 6. Update UI components for localization
+  - [ ] 6.1 Update ChatPage component
+    - Replace hardcoded strings with `t()` calls
+    - Add RTL-aware styling for message bubbles
+    - Update input placeholder and button text
+    - _Requirements: 1.1, 2.2, 6.1_
+  - [ ] 6.2 Update Sidebar component
+    - Replace hardcoded strings with `t()` calls
+    - Add RTL-aware positioning
+    - _Requirements: 1.1, 2.2_
+  - [ ] 6.3 Update MessageSkeleton and error displays
+    - Localize loading messages and error text
+    - Ensure RTL compatibility
+    - _Requirements: 1.1_
+  - [ ] 6.4 Write property test for Persian text preservation
+    - **Property 6: Persian text preservation round-trip**
+    - **Validates: Requirements 6.2**
+
+- [ ] 7. Checkpoint - Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+
+- [ ] 8. Update backend for language support
+  - [ ] 8.1 Update DTOs to include language parameter
+    - Add `language` field to `SendMessageRequest`
+    - Add `language` field to `ResumeConversationRequest`
+    - Default to 'en' for backward compatibility
+    - _Requirements: 3.4_
+  - [ ] 8.2 Update SymptomCheckerProvider for Persian responses
+    - Modify system prompts to include language instructions
+    - Create `get_localized_prompt()` helper function
+    - Apply to all prompt templates (questions, DDX, summary)
+    - _Requirements: 3.1, 3.2, 3.3, 3.4_
+  - [ ] 8.3 Write property test for system prompt language inclusion
+    - **Property 8: System prompt language inclusion**
+    - **Validates: Requirements 3.4**
+
+- [ ] 9. Update frontend API service
+  - [ ] 9.1 Update api.ts to pass language parameter
+    - Modify `sendMessageStream()` to include locale
+    - Modify `resumeConversationStream()` to include locale
+    - Get locale from LocaleContext
+    - _Requirements: 3.4_
+  - [ ] 9.2 Update useChatViewModel to pass language
+    - Pass current locale to API calls
+    - Ensure language is included in all message requests
+    - _Requirements: 3.4_
+
+- [ ] 10. Add Persian translations content
+  - [ ] 10.1 Complete Persian translation file
+    - Translate all UI strings to Persian
+    - Include proper Persian medical terminology
+    - Review translations for accuracy
+    - _Requirements: 1.1_
+  - [ ] 10.2 Add Persian font assets
+    - Download and add Vazirmatn font files
+    - Configure font-face in CSS
+    - Set up font loading strategy
+    - _Requirements: 6.3_
+
+- [ ] 11. Final Checkpoint - Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.
