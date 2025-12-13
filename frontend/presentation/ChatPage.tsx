@@ -272,16 +272,13 @@ export function ChatPage() {
                     }`}
                     data-testid={`message-${message.role}`}
                   >
-                    <div className={`flex gap-3 ${
-                      direction === 'rtl'
-                        ? (message.role === 'user'
-                            ? 'max-w-[80%] flex-row'
-                            : 'max-w-[95%] sm:max-w-[85%] flex-row md:flex-row-reverse')
-                        : (message.role === 'user' 
-                            ? 'max-w-[80%] flex-row-reverse'
-                            : 'max-w-[95%] sm:max-w-[85%] flex-row')
+                    <div className={`${
+                      message.role === 'user'
+                        ? `flex gap-3 max-w-[80%] ${direction === 'rtl' ? 'flex-row' : 'flex-row-reverse'}`
+                        : `flex flex-col gap-2 max-w-[95%] sm:max-w-[85%] ${direction === 'rtl' ? 'items-start' : 'items-start'}`
                     }`}>
-                      <div className="flex-shrink-0">
+                      {/* Avatar */}
+                      <div className={`flex-shrink-0 ${message.role === 'assistant' ? (direction === 'rtl' ? 'self-start' : 'self-start') : ''}`}>
                         {message.role === 'assistant' ? (
                           <div className="w-8 h-8 rounded-full bg-violet-600 flex items-center justify-center text-white" data-testid="ai-avatar">
                             <Bot size={16} />
@@ -293,9 +290,10 @@ export function ChatPage() {
                         )}
                       </div>
 
+                      {/* Message content */}
                       <div className="flex flex-col">
                         <div
-                          className={`text-sm px-4 py-3 ${
+                          className={`text-base px-4 py-3 ${
                             message.role === 'user'
                               ? `bg-sky-100 text-gray-800 rounded-2xl ${direction === 'rtl' ? 'rounded-tl-sm' : 'rounded-tr-sm'}`
                               : 'text-gray-700'
@@ -328,7 +326,7 @@ export function ChatPage() {
                                 key={idx}
                                 onClick={() => handleOptionClick(option)}
                                 disabled={isLoading}
-                                className="px-4 py-2 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-full text-blue-600 text-sm font-medium transition-colors disabled:opacity-50"
+                                className="px-4 py-2 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-full text-blue-600 text-base font-medium transition-colors disabled:opacity-50"
                               >
                                 {option}
                               </button>
@@ -357,7 +355,7 @@ export function ChatPage() {
                                     {q.question_number}
                                   </span>
                                   <div className="flex-1 space-y-3">
-                                    <p className="text-sm font-medium text-gray-800">
+                                    <p className="text-base font-medium text-gray-800">
                                       {q.question}
                                     </p>
                                     <div className="grid grid-cols-2 gap-2 w-full">
@@ -366,7 +364,7 @@ export function ChatPage() {
                                           key={optIdx}
                                           onClick={() => handleMultiAnswerChange(qIdx, option)}
                                           disabled={isLoading}
-                                          className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all duration-150 disabled:opacity-50 text-center ${
+                                          className={`px-3 py-2 rounded-lg text-base font-medium transition-all duration-150 disabled:opacity-50 text-center ${
                                             multiAnswers[qIdx] === option
                                               ? 'bg-violet-600 text-white shadow-sm'
                                               : 'bg-gray-100 hover:bg-gray-200 text-gray-700 hover:text-gray-900'
@@ -383,7 +381,7 @@ export function ChatPage() {
                             <button
                               onClick={handleMultiAnswerSubmit}
                               disabled={isLoading || !multiAnswers.every(a => a.trim())}
-                              className="w-full mt-2 px-6 py-2.5 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-sm font-medium transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm hover:shadow-md"
+                              className="w-full mt-2 px-6 py-3 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-base font-medium transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm hover:shadow-md"
                             >
                               {t('chat.submitAnswers')}
                             </button>
