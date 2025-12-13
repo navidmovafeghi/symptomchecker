@@ -393,7 +393,8 @@ from src.infrastructure.symptom_checker_graph import should_continue_refinement,
 def create_test_state(
     refinement_count: int = 0,
     diagnoses: list[Diagnosis] | None = None,
-    use_refined: bool = False
+    use_refined: bool = False,
+    language: str = 'en'
 ) -> SymptomCheckerState:
     """Helper to create a test state with specified parameters."""
     ddx = None
@@ -414,6 +415,7 @@ def create_test_state(
         "refined_ddx": ddx if use_refined else None,
         "refinement_count": refinement_count,
         "final_summary": None,
+        "language": language,
     }
     return state
 
@@ -707,6 +709,7 @@ def create_state_with_qa_and_ddx(
     diagnoses: list[Diagnosis],
     refinement_qa_pairs: list[dict] | None = None,
     refinement_count: int = 0,
+    language: str = 'en',
 ) -> SymptomCheckerState:
     """Helper to create a state with QA pairs and DDX for checkpoint testing."""
     ddx = DifferentialDiagnosis(
@@ -725,6 +728,7 @@ def create_state_with_qa_and_ddx(
         "refined_ddx": None,
         "refinement_count": refinement_count,
         "final_summary": None,
+        "language": language,
     }
     return state
 

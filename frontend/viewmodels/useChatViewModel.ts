@@ -52,11 +52,11 @@ interface ChatState {
   checkpointExpiredMessage: string | null;
 
   // Actions
-  sendMessage: (content: string, useStreaming?: boolean) => Promise<void>;
-  resumeConversation: (userInput: string) => Promise<void>;
-  selectOption: (option: string) => Promise<void>;
+  sendMessage: (content: string, useStreaming?: boolean, locale?: string, questionsHeader?: string) => Promise<void>;
+  resumeConversation: (userInput: string, locale?: string, questionsHeader?: string) => Promise<void>;
+  selectOption: (option: string, locale?: string, questionsHeader?: string) => Promise<void>;
   /** Submit answers to multiple questions at once */
-  submitMultipleAnswers: (answers: string[]) => Promise<void>;
+  submitMultipleAnswers: (answers: string[], locale?: string, questionsHeader?: string) => Promise<void>;
   clearConversation: () => void;
   setError: (error: string | null) => void;
   
@@ -207,8 +207,9 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
   checkpointExpiredMessage: null,
 
   // Send message action
-  // Requirements: 1.1, 1.3, 3.2
-  sendMessage: async (content: string, useStreaming: boolean = true) => {
+  // Requirements: 1.1, 1.3, 3.2, 3.4 (Persian localization)
+  sendMessage: async (content: string, useStreaming: boolean = true, locale?: string, questionsHeader?: string) => {
+    const defaultQuestionsHeader = questionsHeader || 'Please answer the following questions:';
     const { conversationId, messages, isStorageAvailable } = get();
 
     // Validation
@@ -304,7 +305,9 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
           // Stage callback - update the stage indicator
           (stage, message) => {
             set({ currentStage: stage, currentStageMessage: message });
-          }
+          },
+          // Pass locale for Persian language support (Requirements: 3.4)
+          locale
         );
 
         // Check if we got an interrupt
@@ -327,7 +330,7 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
             const questionMessage: Message = {
               id: `question-${Date.now()}`,
               role: 'assistant',
-              content: `Please answer the following questions:\n\n${questionsText}`,
+              content: `${defaultQuestionsHeader}\n\n${questionsText}`,
               timestamp: new Date().toISOString(),
               questions: result.questions,
               isQuestion: true,
@@ -449,8 +452,9 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
   },
 
   // Select an option (click on button)
-  // Requirements: 3.3, 4.1
-  selectOption: async (option: string) => {
+  // Requirements: 3.3, 4.1, 3.4 (Persian localization)
+  selectOption: async (option: string, locale?: string, questionsHeader?: string) => {
+    const defaultQuestionsHeader = questionsHeader || 'Please answer the following questions:';
     const { threadId, messages, conversationId, isStorageAvailable } = get();
 
     if (!threadId) {
@@ -506,14 +510,16 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
     };
 
     try {
-      // Use streaming resume to get stage indicators
+      // Use streaming resume to get stage indicators (selectOption)
       const result = await apiService.resumeConversationStream(
         threadId,
         option,
         // Stage callback - update the stage indicator
         (stage, message) => {
           set({ currentStage: stage, currentStageMessage: message });
-        }
+        },
+        // Pass locale for Persian language support (Requirements: 3.4)
+        locale
       );
 
       if (result.type === 'interrupt') {
@@ -528,7 +534,7 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
           const questionMessage: Message = {
             id: `question-${Date.now()}`,
             role: 'assistant',
-            content: `Please answer the following questions:\n\n${questionsText}`,
+            content: `${defaultQuestionsHeader}\n\n${questionsText}`,
             timestamp: new Date().toISOString(),
             questions: result.questions,
             isQuestion: true,
@@ -645,8 +651,9 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
   },
 
   // Resume conversation action (for free-text input during interrupts)
-  // Requirements: 3.3, 4.1
-  resumeConversation: async (userInput: string) => {
+  // Requirements: 3.3, 4.1, 3.4 (Persian localization)
+  resumeConversation: async (userInput: string, locale?: string, questionsHeader?: string) => {
+    const defaultQuestionsHeader = questionsHeader || 'Please answer the following questions:';
     const { threadId, messages, conversationId, isStorageAvailable } = get();
 
     if (!threadId) {
@@ -702,14 +709,16 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
     };
 
     try {
-      // Use streaming resume to get stage indicators
+      // Use streaming resume to get stage indicators (resumeConversation)
       const result = await apiService.resumeConversationStream(
         threadId,
         userInput,
         // Stage callback - update the stage indicator
         (stage, message) => {
           set({ currentStage: stage, currentStageMessage: message });
-        }
+        },
+        // Pass locale for Persian language support (Requirements: 3.4)
+        locale
       );
 
       if (result.type === 'interrupt') {
@@ -724,7 +733,7 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
           const questionMessage: Message = {
             id: `question-${Date.now()}`,
             role: 'assistant',
-            content: `Please answer the following questions:\n\n${questionsText}`,
+            content: `${defaultQuestionsHeader}\n\n${questionsText}`,
             timestamp: new Date().toISOString(),
             questions: result.questions,
             isQuestion: true,
@@ -843,7 +852,9 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
   },
 
   // Submit multiple answers at once (for multi-question mode)
-  submitMultipleAnswers: async (answers: string[]) => {
+  // Requirements: 3.4 (Persian localization)
+  submitMultipleAnswers: async (answers: string[], locale?: string, questionsHeader?: string) => {
+    const defaultQuestionsHeader = questionsHeader || 'Please answer the following questions:';
     const { threadId, messages, conversationId, isStorageAvailable, pendingQuestions } = get();
 
     if (!threadId) {
@@ -903,14 +914,16 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
     };
 
     try {
-      // Use streaming resume to get stage indicators
+      // Use streaming resume to get stage indicators (submitMultipleAnswers)
       const result = await apiService.resumeConversationStream(
         threadId,
         answers,
         // Stage callback - update the stage indicator
         (stage, message) => {
           set({ currentStage: stage, currentStageMessage: message });
-        }
+        },
+        // Pass locale for Persian language support (Requirements: 3.4)
+        locale
       );
 
       if (result.type === 'interrupt') {
@@ -925,7 +938,7 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
           const questionMessage: Message = {
             id: `question-${Date.now()}`,
             role: 'assistant',
-            content: `Please answer the following questions:\n\n${questionsText}`,
+            content: `${defaultQuestionsHeader}\n\n${questionsText}`,
             timestamp: new Date().toISOString(),
             questions: result.questions,
             isQuestion: true,

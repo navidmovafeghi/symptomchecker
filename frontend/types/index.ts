@@ -33,6 +33,8 @@ export interface SendMessageRequest {
     role: string;
     content: string;
   }>;
+  /** User's preferred language for AI responses: 'en' or 'fa' */
+  language?: string;
 }
 
 export interface SendMessageResponse {

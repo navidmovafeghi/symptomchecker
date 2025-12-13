@@ -45,20 +45,23 @@ class ApiService {
    *                  for LLM context (since server doesn't store conversations)
    * @param onChunk - Callback for streaming response chunks
    * @param onStage - Optional callback for stage updates (e.g., "Preparing screening questions")
+   * @param locale - User's preferred language for AI responses ('en' or 'fa')
    */
   async sendMessageStream(
     request: SendMessageRequest,
     onChunk: (chunk: string) => void,
-    onStage?: (stage: string, message: string) => void
+    onStage?: (stage: string, message: string) => void,
+    locale?: string
   ): Promise<
     | { type: 'complete'; conversationId?: string }
     | { type: 'interrupt'; question?: string; options?: string[]; questions?: Array<{ question: string; options: string[]; question_number: number }>; totalQuestions?: number; threadId: string; conversationId?: string }
   > {
-    // Build request body, including conversation_history if provided
+    // Build request body, including conversation_history and language if provided
     const requestBody: SendMessageRequest = {
       message: request.message,
       ...(request.conversation_id && { conversation_id: request.conversation_id }),
       ...(request.conversation_history && { conversation_history: request.conversation_history }),
+      ...(locale && { language: locale }),
     };
 
     const response = await fetch(`${this.baseUrl}/api/chat/message/stream`, {
@@ -190,11 +193,15 @@ class ApiService {
   /**
    * Resume an interrupted conversation with user's answer.
    * 
+   * @param threadId - The thread ID to resume
+   * @param userInput - User's answer(s) to the interrupt question
+   * @param locale - User's preferred language for AI responses ('en' or 'fa')
    * @throws {CheckpointExpiredError} When the server checkpoint is missing (404)
    */
   async resumeConversation(
     threadId: string,
-    userInput: string | string[]
+    userInput: string | string[],
+    locale?: string
   ): Promise<
     | { type: 'complete'; content: string; conversation_id: string }
     | { type: 'interrupt'; question?: string; options?: string[]; questions?: Array<{ question: string; options: string[]; question_number: number }>; total_questions?: number; conversation_id: string }
@@ -212,6 +219,7 @@ class ApiService {
       body: JSON.stringify({
         thread_id: threadId,
         user_input: userInputPayload,
+        ...(locale && { language: locale }),
       }),
     });
 
@@ -236,12 +244,14 @@ class ApiService {
    * @param threadId - The thread ID to resume
    * @param userInput - User's answer(s) to the interrupt question
    * @param onStage - Optional callback for stage updates (e.g., "Analyzing symptoms...")
+   * @param locale - User's preferred language for AI responses ('en' or 'fa')
    * @throws {CheckpointExpiredError} When the server checkpoint is missing (404)
    */
   async resumeConversationStream(
     threadId: string,
     userInput: string | string[],
-    onStage?: (stage: string, message: string) => void
+    onStage?: (stage: string, message: string) => void,
+    locale?: string
   ): Promise<
     | { type: 'complete'; content: string; conversation_id: string }
     | { type: 'interrupt'; question?: string; options?: string[]; questions?: Array<{ question: string; options: string[]; question_number: number }>; total_questions?: number; conversation_id: string }
@@ -259,6 +269,7 @@ class ApiService {
       body: JSON.stringify({
         thread_id: threadId,
         user_input: userInputPayload,
+        ...(locale && { language: locale }),
       }),
     });
 

@@ -50,7 +50,9 @@ class SendMessageUseCase:
         temp_conversation = conversation.add_message(user_message)
         messages_for_llm = temp_conversation.get_messages_for_llm()
         
-        assistant_content = await self.llm_provider.generate_response(messages_for_llm)
+        assistant_content = await self.llm_provider.generate_response(
+            messages_for_llm, language=request.language
+        )
         assistant_message = Message(role="assistant", content=assistant_content)
 
         return SendMessageResponse(
@@ -99,7 +101,7 @@ class SendMessageUseCase:
         thread_id = conversation.get_thread_id()
 
         async for chunk in self.llm_provider.generate_response_stream(
-            messages_for_llm, thread_id=thread_id
+            messages_for_llm, thread_id=thread_id, language=request.language
         ):
             yield chunk
 
@@ -146,7 +148,7 @@ class ResumeConversationUseCase:
             raise InvalidMessageException("User input cannot be empty")
 
         async for chunk in self.llm_provider.resume_stream(
-            request.thread_id, request.user_input
+            request.thread_id, request.user_input, language=request.language
         ):
             yield chunk
 
@@ -163,7 +165,9 @@ class ResumeConversationUseCase:
         except ValueError:
             raise InvalidMessageException(f"Invalid thread_id format: {request.thread_id}")
 
-        result = await self.llm_provider.resume(request.thread_id, request.user_input)
+        result = await self.llm_provider.resume(
+            request.thread_id, request.user_input, language=request.language
+        )
 
         if result.get("type") == "interrupt":
             return ResumeConversationResponse(

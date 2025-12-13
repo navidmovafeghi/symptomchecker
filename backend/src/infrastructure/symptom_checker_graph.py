@@ -26,6 +26,25 @@ from .symptom_checker_models import (
 
 
 # ============================================================================
+# LOCALIZATION HELPER
+# ============================================================================
+
+def get_localized_prompt(base_prompt: str, language: str) -> str:
+    """Add language instruction to system prompt.
+    
+    Args:
+        base_prompt: The original system prompt
+        language: User's preferred language ('en' or 'fa')
+        
+    Returns:
+        The prompt with language instructions appended for non-English languages
+    """
+    if language == 'fa':
+        return f"{base_prompt}\n\nIMPORTANT: Respond entirely in Persian (Farsi). Use appropriate Persian medical terminology. All questions, options, explanations, and summaries must be in Persian."
+    return base_prompt
+
+
+# ============================================================================
 # STATE DEFINITION
 # ============================================================================
 
@@ -47,6 +66,7 @@ class SymptomCheckerState(TypedDict):
         refined_ddx: Updated differential diagnosis after refinement
         refinement_count: Number of refinement iterations completed
         final_summary: Final patient-friendly summary
+        language: User's preferred language ('en' or 'fa')
     """
     messages: Annotated[list[AnyMessage], add_messages]
     symptom_input: str
@@ -58,6 +78,7 @@ class SymptomCheckerState(TypedDict):
     refined_ddx: DifferentialDiagnosis | None  # Refined DDX after iterations
     refinement_count: int  # Number of refinement iterations
     final_summary: FinalSummary | None  # Final summary for the user
+    language: str  # User's preferred language ('en' or 'fa')
 
 
 # ============================================================================
@@ -161,8 +182,14 @@ def generate_questions(state: SymptomCheckerState, questions_model) -> dict:
             symptom = msg.content
             break
 
+    # Get language from state (default to 'en')
+    language = state.get("language", "en")
+    
+    # Apply language localization to the prompt
+    localized_prompt = get_localized_prompt(QUESTION_GENERATOR_PROMPT, language)
+    
     messages = [
-        SystemMessage(content=QUESTION_GENERATOR_PROMPT),
+        SystemMessage(content=localized_prompt),
         HumanMessage(content=f"Patient reports: {symptom}"),
     ]
 
@@ -261,8 +288,14 @@ Interview responses:
 
 Based on this information, provide a differential diagnosis."""
 
+    # Get language from state (default to 'en')
+    language = state.get("language", "en")
+    
+    # Apply language localization to the prompt
+    localized_prompt = get_localized_prompt(DDX_GENERATOR_PROMPT, language)
+    
     messages = [
-        SystemMessage(content=DDX_GENERATOR_PROMPT),
+        SystemMessage(content=localized_prompt),
         HumanMessage(content=user_content),
     ]
 
@@ -319,8 +352,14 @@ Current differential diagnosis:
 
 Generate ONE follow-up question to help narrow down between the top conditions."""
 
+    # Get language from state (default to 'en')
+    language = state.get("language", "en")
+    
+    # Apply language localization to the prompt
+    localized_prompt = get_localized_prompt(REFINEMENT_QUESTION_PROMPT, language)
+    
     messages = [
-        SystemMessage(content=REFINEMENT_QUESTION_PROMPT),
+        SystemMessage(content=localized_prompt),
         HumanMessage(content=user_content),
     ]
 
@@ -403,8 +442,14 @@ Interview responses:
 
 Based on ALL the information collected, provide an updated differential diagnosis."""
 
+    # Get language from state (default to 'en')
+    language = state.get("language", "en")
+    
+    # Apply language localization to the prompt
+    localized_prompt = get_localized_prompt(DDX_GENERATOR_PROMPT, language)
+    
     messages = [
-        SystemMessage(content=DDX_GENERATOR_PROMPT),
+        SystemMessage(content=localized_prompt),
         HumanMessage(content=user_content),
     ]
 
@@ -509,8 +554,14 @@ Final differential diagnosis:
 
 Provide a patient-friendly summary with the most likely diagnosis and recommended next steps."""
 
+    # Get language from state (default to 'en')
+    language = state.get("language", "en")
+    
+    # Apply language localization to the prompt
+    localized_prompt = get_localized_prompt(FINAL_SUMMARY_PROMPT, language)
+    
     messages = [
-        SystemMessage(content=FINAL_SUMMARY_PROMPT),
+        SystemMessage(content=localized_prompt),
         HumanMessage(content=user_content),
     ]
 
@@ -567,6 +618,9 @@ def build_symptom_checker_graph(
     → generate_refinement_question → (conditional) → collect_refinement_answer 
     → refine_ddx → generate_refinement_question (loop) OR generate_final_summary → END
     
+    The language for responses is read from the graph state's 'language' field,
+    which should be set in the initial state when invoking the graph.
+    
     Args:
         api_key: Anthropic API key
         model_name: Name of the Anthropic model to use
@@ -590,6 +644,7 @@ def build_symptom_checker_graph(
     summary_model = base_model.with_structured_output(FinalSummary)
     
     # Create node functions with bound models using partial
+    # Language is read from state in each node function
     generate_questions_node = partial(generate_questions, questions_model=questions_model)
     collect_answers_node = partial(collect_answers, answer_extractor_model=base_model)
     generate_ddx_node = partial(generate_ddx, ddx_model=ddx_model)

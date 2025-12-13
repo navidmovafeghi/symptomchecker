@@ -35,6 +35,51 @@ def encode_options(question: str, options: List[str]) -> str:
     return f"{question}\n__OPTIONS__:{json.dumps(options)}"
 
 
+def format_final_summary(final_summary: Any, language: str = 'en') -> str:
+    """Format the final summary response in the appropriate language.
+    
+    Args:
+        final_summary: The FinalSummary object with diagnosis info
+        language: User's preferred language ('en' or 'fa')
+        
+    Returns:
+        Formatted response string
+    """
+    if language == 'fa':
+        return f"""بر اساس گفتگوی ما، این ارزیابی من است:
+
+**محتمل‌ترین تشخیص:** {final_summary.top_diagnosis}
+**اطمینان:** {final_summary.probability:.0%}
+
+{final_summary.explanation}
+
+{final_summary.disclaimer}"""
+    else:
+        return f"""Based on our conversation, here's my assessment:
+
+**Most Likely Diagnosis:** {final_summary.top_diagnosis}
+**Confidence:** {final_summary.probability:.0%}
+
+{final_summary.explanation}
+
+{final_summary.disclaimer}"""
+
+
+def get_fallback_complete_message(language: str = 'en') -> str:
+    """Get the fallback completion message in the appropriate language.
+    
+    Args:
+        language: User's preferred language ('en' or 'fa')
+        
+    Returns:
+        Fallback message string
+    """
+    if language == 'fa':
+        return "ارزیابی کامل شد. لطفاً برای تشخیص صحیح با یک متخصص بهداشت مشورت کنید."
+    else:
+        return "Assessment complete. Please consult a healthcare provider for proper diagnosis."
+
+
 class SymptomCheckerProvider(ILLMProvider, ICheckpointManager):
     """Medical symptom checker using LangGraph workflow.
     
@@ -145,7 +190,7 @@ class SymptomCheckerProvider(ILLMProvider, ICheckpointManager):
             self._initialized = False
 
     async def generate_response(
-        self, messages: List[dict], thread_id: Optional[str] = None
+        self, messages: List[dict], thread_id: Optional[str] = None, language: str = 'en'
     ) -> str:
         """Generate a non-streaming response.
         
@@ -157,6 +202,7 @@ class SymptomCheckerProvider(ILLMProvider, ICheckpointManager):
         Args:
             messages: List of message dicts with 'role' and 'content'
             thread_id: Optional thread ID for state persistence
+            language: User's preferred language ('en' or 'fa')
             
         Returns:
             Complete response as a single string
@@ -165,12 +211,12 @@ class SymptomCheckerProvider(ILLMProvider, ICheckpointManager):
             LLMProviderException: If an error occurs during generation
         """
         result = ""
-        async for chunk in self.generate_response_stream(messages, thread_id):
+        async for chunk in self.generate_response_stream(messages, thread_id, language):
             result += chunk
         return result
 
     async def generate_response_stream(
-        self, messages: List[dict], thread_id: Optional[str] = None
+        self, messages: List[dict], thread_id: Optional[str] = None, language: str = 'en'
     ) -> AsyncIterator[str]:
         """Generate streaming response with interrupt support.
         
@@ -180,6 +226,7 @@ class SymptomCheckerProvider(ILLMProvider, ICheckpointManager):
         Args:
             messages: List of message dicts with 'role' and 'content'
             thread_id: Optional thread ID for state persistence
+            language: User's preferred language ('en' or 'fa')
             
         Yields:
             Response chunks (may include __OPTIONS__ encoding for questions)
@@ -189,7 +236,10 @@ class SymptomCheckerProvider(ILLMProvider, ICheckpointManager):
         """
         # Handle empty message list gracefully
         if not messages:
-            yield "Hello! I'm a medical symptom checker. Please describe your symptoms and I'll help assess them."
+            if language == 'fa':
+                yield "سلام! من یک بررسی‌کننده علائم پزشکی هستم. لطفاً علائم خود را شرح دهید تا به ارزیابی آن‌ها کمک کنم."
+            else:
+                yield "Hello! I'm a medical symptom checker. Please describe your symptoms and I'll help assess them."
             return
         
         try:
@@ -203,13 +253,16 @@ class SymptomCheckerProvider(ILLMProvider, ICheckpointManager):
                     break
             
             if not last_user_message:
-                yield "Please describe your symptoms so I can help assess them."
+                if language == 'fa':
+                    yield "لطفاً علائم خود را شرح دهید تا بتوانم به ارزیابی آن‌ها کمک کنم."
+                else:
+                    yield "Please describe your symptoms so I can help assess them."
                 return
             
             # Create config with thread_id for checkpointing
             config = {"configurable": {"thread_id": thread_id or "default"}}
             
-            # Initialize state with the user's message
+            # Initialize state with the user's message and language preference
             initial_state = {
                 "messages": [HumanMessage(content=last_user_message)],
                 "symptom_input": "",
@@ -221,13 +274,14 @@ class SymptomCheckerProvider(ILLMProvider, ICheckpointManager):
                 "refined_ddx": None,
                 "refinement_count": 0,
                 "final_summary": None,
+                "language": language,
             }
             
-            # Map node names to user-friendly stage descriptions
+            # Map node names to user-friendly stage descriptions (bilingual)
             # Note: generate_refinement_question is skipped because we don't know yet
             # if we'll actually ask the question. collect_refinement_answer shows
             # "Preparing follow-up question" since that's when we know we're asking.
-            stage_descriptions = {
+            stage_descriptions_en = {
                 "generate_questions": "Preparing screening questions",
                 "collect_answers": "Processing your answers",
                 "generate_ddx": "Analyzing symptoms",
@@ -236,12 +290,22 @@ class SymptomCheckerProvider(ILLMProvider, ICheckpointManager):
                 "refine_ddx": "Refining diagnosis",
                 "generate_final_summary": "Preparing your assessment",
             }
+            stage_descriptions_fa = {
+                "generate_questions": "آماده‌سازی سوالات غربالگری",
+                "collect_answers": "در حال پردازش پاسخ‌های شما",
+                "generate_ddx": "در حال تحلیل علائم",
+                "generate_refinement_question": "آماده‌سازی سوال تکمیلی",  # Skipped in code
+                "collect_refinement_answer": "آماده‌سازی سوال تکمیلی",
+                "refine_ddx": "اصلاح تشخیص",
+                "generate_final_summary": "آماده‌سازی ارزیابی شما",
+            }
+            stage_descriptions = stage_descriptions_fa if language == 'fa' else stage_descriptions_en
             
             # Yield initial stage before graph starts
             yield json.dumps({
                 "type": "stage",
                 "stage": "generate_questions",
-                "message": "Preparing screening questions"
+                "message": stage_descriptions["generate_questions"]
             }) + "\n"
             
             # Stream the graph execution
@@ -295,33 +359,31 @@ class SymptomCheckerProvider(ILLMProvider, ICheckpointManager):
                     if node_name == "generate_final_summary" and node_output:
                         final_summary = node_output.get("final_summary")
                         if final_summary:
-                            # Format the final summary as a readable response
-                            response = f"""Based on our conversation, here's my assessment:
-
-**Most Likely Diagnosis:** {final_summary.top_diagnosis}
-**Confidence:** {final_summary.probability:.0%}
-
-{final_summary.explanation}
-
-{final_summary.disclaimer}"""
-                            yield response
+                            yield format_final_summary(final_summary, language)
                             return
             
             # If we get here without yielding, something went wrong
-            yield "I apologize, but I couldn't complete the assessment. Please try again."
+            if language == 'fa':
+                yield "متأسفم، نتوانستم ارزیابی را تکمیل کنم. لطفاً دوباره تلاش کنید."
+            else:
+                yield "I apologize, but I couldn't complete the assessment. Please try again."
                 
         except Exception as e:
             raise LLMProviderException(f"SymptomCheckerProvider error: {str(e)}")
 
-    async def resume(self, thread_id: str, user_input: str) -> Dict[str, Any]:
+    async def resume(self, thread_id: str, user_input: str, language: str = 'en') -> Dict[str, Any]:
         """Resume an interrupted conversation with user's answer.
         
         Loads the checkpoint for the given thread_id and continues execution
         from the interrupt point with the user's input.
         
+        Note: The language parameter is accepted for interface compatibility but
+        the language is already stored in the graph state from the initial call.
+        
         Args:
             thread_id: Unique thread identifier for the conversation
             user_input: User's response to the interrupt question (can be JSON for multi-answer)
+            language: User's preferred language ('en' or 'fa') - stored in state from initial call
             
         Returns:
             Dict with:
@@ -398,17 +460,9 @@ class SymptomCheckerProvider(ILLMProvider, ICheckpointManager):
                     if node_name == "generate_final_summary" and node_output:
                         final_summary = node_output.get("final_summary")
                         if final_summary:
-                            response = f"""Based on our conversation, here's my assessment:
-
-**Most Likely Diagnosis:** {final_summary.top_diagnosis}
-**Confidence:** {final_summary.probability:.0%}
-
-{final_summary.explanation}
-
-{final_summary.disclaimer}"""
                             return {
                                 "type": "complete",
-                                "content": response,
+                                "content": format_final_summary(final_summary, language),
                                 "thread_id": thread_id,
                             }
             
@@ -417,23 +471,15 @@ class SymptomCheckerProvider(ILLMProvider, ICheckpointManager):
             if final_state and final_state.values:
                 final_summary = final_state.values.get("final_summary")
                 if final_summary:
-                    response = f"""Based on our conversation, here's my assessment:
-
-**Most Likely Diagnosis:** {final_summary.top_diagnosis}
-**Confidence:** {final_summary.probability:.0%}
-
-{final_summary.explanation}
-
-{final_summary.disclaimer}"""
                     return {
                         "type": "complete",
-                        "content": response,
+                        "content": format_final_summary(final_summary, language),
                         "thread_id": thread_id,
                     }
             
             return {
                 "type": "complete",
-                "content": "Assessment complete. Please consult a healthcare provider for proper diagnosis.",
+                "content": get_fallback_complete_message(language),
                 "thread_id": thread_id,
             }
                 
@@ -442,15 +488,19 @@ class SymptomCheckerProvider(ILLMProvider, ICheckpointManager):
         except Exception as e:
             raise LLMProviderException(f"SymptomCheckerProvider resume error: {str(e)}")
 
-    async def resume_stream(self, thread_id: str, user_input: str) -> AsyncIterator[str]:
+    async def resume_stream(self, thread_id: str, user_input: str, language: str = 'en') -> AsyncIterator[str]:
         """Resume an interrupted conversation with streaming stage updates.
         
         Yields stage indicator JSON messages as processing progresses,
         followed by the final interrupt or complete JSON message.
         
+        Note: The language parameter is accepted for interface compatibility but
+        the language is already stored in the graph state from the initial call.
+        
         Args:
             thread_id: Unique thread identifier for the conversation
             user_input: User's response to the interrupt question (can be JSON for multi-answer)
+            language: User's preferred language ('en' or 'fa') - stored in state from initial call
             
         Yields:
             Stage indicator JSON messages (type: "stage")
@@ -483,11 +533,11 @@ class SymptomCheckerProvider(ILLMProvider, ICheckpointManager):
             except (json.JSONDecodeError, TypeError):
                 pass
             
-            # Map node names to user-friendly stage descriptions
+            # Map node names to user-friendly stage descriptions (bilingual)
             # Note: generate_refinement_question is skipped because we don't know yet
             # if we'll actually ask the question. collect_refinement_answer shows
             # "Preparing follow-up question" since that's when we know we're asking.
-            stage_descriptions = {
+            stage_descriptions_en = {
                 "generate_questions": "Preparing screening questions",
                 "collect_answers": "Processing your answers",
                 "generate_ddx": "Analyzing symptoms",
@@ -495,13 +545,25 @@ class SymptomCheckerProvider(ILLMProvider, ICheckpointManager):
                 "collect_refinement_answer": "Preparing follow-up question",
                 "refine_ddx": "Refining diagnosis",
                 "generate_final_summary": "Preparing your assessment",
+                "processing": "Processing your answers",
             }
+            stage_descriptions_fa = {
+                "generate_questions": "آماده‌سازی سوالات غربالگری",
+                "collect_answers": "در حال پردازش پاسخ‌های شما",
+                "generate_ddx": "در حال تحلیل علائم",
+                "generate_refinement_question": "آماده‌سازی سوال تکمیلی",  # Skipped in code
+                "collect_refinement_answer": "آماده‌سازی سوال تکمیلی",
+                "refine_ddx": "اصلاح تشخیص",
+                "generate_final_summary": "آماده‌سازی ارزیابی شما",
+                "processing": "در حال پردازش پاسخ‌های شما",
+            }
+            stage_descriptions = stage_descriptions_fa if language == 'fa' else stage_descriptions_en
             
             # Yield initial stage message before graph execution
             yield json.dumps({
                 "type": "stage",
                 "stage": "processing",
-                "message": "Processing your answers"
+                "message": stage_descriptions["processing"]
             }) + "\n"
             
             # Resume with user input using Command
@@ -557,17 +619,9 @@ class SymptomCheckerProvider(ILLMProvider, ICheckpointManager):
                     if node_name == "generate_final_summary" and node_output:
                         final_summary = node_output.get("final_summary")
                         if final_summary:
-                            response = f"""Based on our conversation, here's my assessment:
-
-**Most Likely Diagnosis:** {final_summary.top_diagnosis}
-**Confidence:** {final_summary.probability:.0%}
-
-{final_summary.explanation}
-
-{final_summary.disclaimer}"""
                             yield json.dumps({
                                 "type": "complete",
-                                "content": response,
+                                "content": format_final_summary(final_summary, language),
                                 "thread_id": thread_id,
                             }) + "\n"
                             return
@@ -577,24 +631,16 @@ class SymptomCheckerProvider(ILLMProvider, ICheckpointManager):
             if final_state and final_state.values:
                 final_summary = final_state.values.get("final_summary")
                 if final_summary:
-                    response = f"""Based on our conversation, here's my assessment:
-
-**Most Likely Diagnosis:** {final_summary.top_diagnosis}
-**Confidence:** {final_summary.probability:.0%}
-
-{final_summary.explanation}
-
-{final_summary.disclaimer}"""
                     yield json.dumps({
                         "type": "complete",
-                        "content": response,
+                        "content": format_final_summary(final_summary, language),
                         "thread_id": thread_id,
                     }) + "\n"
                     return
             
             yield json.dumps({
                 "type": "complete",
-                "content": "Assessment complete. Please consult a healthcare provider for proper diagnosis.",
+                "content": get_fallback_complete_message(language),
                 "thread_id": thread_id,
             }) + "\n"
                 

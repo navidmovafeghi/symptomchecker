@@ -1,0 +1,65 @@
+{
+  "common": {
+    "send": "ارسال",
+    "cancel": "لغو",
+    "loading": "در حال بارگذاری...",
+    "error": "خطا",
+    "dismiss": "بستن",
+    "submit": "ثبت",
+    "continue": "ادامه",
+    "startNew": "شروع جدید",
+    "warning": "هشدار"
+  },
+  "chat": {
+    "placeholder": "پیام خود را بنویسید...",
+    "placeholderQuestions": "لطفاً به سوالات بالا پاسخ دهید...",
+    "placeholderOptions": "یک گزینه انتخاب کنید یا بنویسید...",
+    "newChat": "گفتگوی جدید",
+    "chatHistory": "تاریخچه گفتگو",
+    "noConversations": "هنوز گفتگویی وجود ندارد",
+    "newConversation": "گفتگوی جدید",
+    "howCanIHelp": "چگونه می‌توانم کمکتان کنم؟",
+    "aiAssistantIntro": "من دستیار هوش مصنوعی شما هستم. هر سوالی دارید بپرسید یا یکی از پیشنهادات را امتحان کنید.",
+    "thinking": "در حال فکر کردن",
+    "submitAnswers": "ثبت پاسخ‌ها",
+    "pleaseAnswerQuestions": "لطفاً به سوالات زیر پاسخ دهید:"
+  },
+  "suggestions": {
+    "explainConcept": "توضیح یک مفهوم",
+    "explainConceptDesc": "کمک به درک بهتر موضوعی",
+    "writeContent": "نوشتن محتوا",
+    "writeContentDesc": "نوشتن ایمیل، پیام یا اسناد",
+    "answerQuestions": "پاسخ به سوالات",
+    "answerQuestionsDesc": "دریافت اطلاعات در هر موضوعی",
+    "brainstormIdeas": "ایده‌پردازی",
+    "brainstormIdeasDesc": "ایجاد پیشنهادات خلاقانه"
+  },
+  "medical": {
+    "diagnosis": "تشخیص",
+    "confidence": "اطمینان",
+    "symptoms": "علائم",
+    "possibleConditions": "شرایط احتمالی",
+    "recommendations": "توصیه‌ها",
+    "disclaimer": "این توصیه پزشکی نیست. لطفاً با یک متخصص بهداشت مشورت کنید."
+  },
+  "errors": {
+    "storageUnavailable": "حافظه مرورگر در دسترس نیست.",
+    "storageError": "خطای حافظه",
+    "sessionExpired": "نشست شما منقضی شده است.",
+    "sessionExpiredTitle": "نشست منقضی شده",
+    "sendFailed": "ارسال پیام ناموفق بود. لطفاً دوباره تلاش کنید.",
+    "loadFailed": "بارگذاری گفتگوها ناموفق بود.",
+    "genericError": "مشکلی پیش آمد. لطفاً دوباره تلاش کنید."
+  },
+  "actions": {
+    "startNewConversation": "شروع گفتگوی جدید",
+    "continueHere": "ادامه در اینجا",
+    "delete": "حذف",
+    "retry": "تلاش مجدد"
+  },
+  "language": {
+    "switchLanguage": "تغییر زبان",
+    "english": "English",
+    "persian": "فارسی"
+  }
+}

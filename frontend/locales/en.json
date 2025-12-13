@@ -1,0 +1,65 @@
+{
+  "common": {
+    "send": "Send",
+    "cancel": "Cancel",
+    "loading": "Loading...",
+    "error": "Error",
+    "dismiss": "Dismiss",
+    "submit": "Submit",
+    "continue": "Continue",
+    "startNew": "Start New",
+    "warning": "Warning"
+  },
+  "chat": {
+    "placeholder": "Type a message...",
+    "placeholderQuestions": "Please answer the questions above...",
+    "placeholderOptions": "Select an option or type...",
+    "newChat": "New Chat",
+    "chatHistory": "Chat History",
+    "noConversations": "No conversations yet",
+    "newConversation": "New conversation",
+    "howCanIHelp": "How can I help you today?",
+    "aiAssistantIntro": "I'm your AI assistant. Ask me anything or try one of these suggestions.",
+    "thinking": "Thinking",
+    "submitAnswers": "Submit Answers",
+    "pleaseAnswerQuestions": "Please answer the following questions:"
+  },
+  "suggestions": {
+    "explainConcept": "Explain a concept",
+    "explainConceptDesc": "Help me understand something",
+    "writeContent": "Write content",
+    "writeContentDesc": "Draft emails, messages, or documents",
+    "answerQuestions": "Answer questions",
+    "answerQuestionsDesc": "Get information on any topic",
+    "brainstormIdeas": "Brainstorm ideas",
+    "brainstormIdeasDesc": "Generate creative suggestions"
+  },
+  "medical": {
+    "diagnosis": "Diagnosis",
+    "confidence": "Confidence",
+    "symptoms": "Symptoms",
+    "possibleConditions": "Possible Conditions",
+    "recommendations": "Recommendations",
+    "disclaimer": "This is not medical advice. Please consult a healthcare professional."
+  },
+  "errors": {
+    "storageUnavailable": "Browser storage is not available.",
+    "storageError": "Storage Error",
+    "sessionExpired": "Your session has expired.",
+    "sessionExpiredTitle": "Session Expired",
+    "sendFailed": "Failed to send message. Please try again.",
+    "loadFailed": "Failed to load conversations.",
+    "genericError": "Something went wrong. Please try again."
+  },
+  "actions": {
+    "startNewConversation": "Start New Conversation",
+    "continueHere": "Continue Here",
+    "delete": "Delete",
+    "retry": "Retry"
+  },
+  "language": {
+    "switchLanguage": "Switch Language",
+    "english": "English",
+    "persian": "فارسی"
+  }
+}

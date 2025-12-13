@@ -19,6 +19,10 @@ class SendMessageRequest(BaseModel):
         default=None,
         description="Full conversation history from client-side storage (IndexedDB)"
     )
+    language: str = Field(
+        default='en',
+        description="User's preferred language: 'en' or 'fa'"
+    )
 
 
 class MessageResponse(BaseModel):
@@ -43,6 +47,10 @@ class ResumeConversationRequest(BaseModel):
     conversation_history: Optional[List[HistoryMessage]] = Field(
         default=None,
         description="Fallback conversation history if server checkpoint is missing"
+    )
+    language: str = Field(
+        default='en',
+        description="User's preferred language: 'en' or 'fa'"
     )
 
 
