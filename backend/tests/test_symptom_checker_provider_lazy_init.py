@@ -22,7 +22,7 @@ def get_temp_db_path():
 
 def get_api_key():
     """Get API key from environment or use a test placeholder."""
-    return os.environ.get("OPENAI_API_KEY", "test-api-key-for-unit-tests")
+    return os.environ.get("ANTHROPIC_API_KEY", "test-api-key-for-unit-tests")
 
 
 def cleanup_db(db_path: str):

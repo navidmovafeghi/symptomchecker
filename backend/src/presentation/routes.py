@@ -74,6 +74,29 @@ async def resume_conversation(
         raise HTTPException(status_code=500, detail=f"Resume error: {str(e)}")
 
 
+@router.post("/resume/stream")
+async def resume_conversation_stream(
+    request: ResumeConversationRequest,
+    use_case: ResumeConversationUseCase = Depends(get_resume_conversation_use_case)
+):
+    """Resume an interrupted conversation with streaming stage indicators."""
+    try:
+        async def generate():
+            async for chunk in use_case.execute_stream(request):
+                yield chunk
+
+        return StreamingResponse(generate(), media_type="text/plain")
+    except InvalidMessageException as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except CheckpointNotFoundException as e:
+        raise HTTPException(
+            status_code=404, 
+            detail=f"Checkpoint expired: {str(e)}. The server session has expired and cannot be resumed."
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Resume stream error: {str(e)}")
+
+
 @router.delete("/checkpoints/{thread_id}")
 async def delete_checkpoint(
     thread_id: str,

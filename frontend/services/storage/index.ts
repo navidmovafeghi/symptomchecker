@@ -25,7 +25,7 @@ let _initialized = false;
 let _initializationPromise: Promise<void> | null = null;
 
 /**
- * Check if IndexedDB storage is supported in the current environment.
+ * Check if IndexedDB storage is supported in the current environment (sync check).
  * Call this before attempting to use the storage service.
  * Requirements: 1.4, 5.3
  * 
@@ -33,6 +33,18 @@ let _initializationPromise: Promise<void> | null = null;
  */
 export function isStorageSupported(): boolean {
   return IndexedDBStorageService.checkIndexedDBSupport();
+}
+
+/**
+ * Verify IndexedDB actually works (async check).
+ * This catches cases where indexedDB exists but operations fail
+ * (e.g., private browsing, storage access denied).
+ * Requirements: 1.4, 5.3
+ * 
+ * @returns Promise<boolean> - true if storage is accessible
+ */
+export async function verifyStorageAccess(): Promise<boolean> {
+  return IndexedDBStorageService.verifyIndexedDBAccess();
 }
 
 /**
@@ -108,12 +120,13 @@ export function resetStorageService(): void {
 }
 
 /**
- * Singleton instance of the storage service.
- * Use this for all storage operations in the application.
+ * Get the deprecated storage service instance.
  * 
  * Note: Call initializeStorage() before using other methods.
  * Check isStorageSupported() first to verify IndexedDB availability.
  * 
  * @deprecated Use getStorageService() instead for better control
  */
-export const storageService = new IndexedDBStorageService();
+export function getDeprecatedStorageService(): IndexedDBStorageService {
+  return getStorageService() as IndexedDBStorageService;
+}

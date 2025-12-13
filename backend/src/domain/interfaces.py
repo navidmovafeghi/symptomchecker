@@ -46,6 +46,18 @@ class ILLMProvider(ABC):
         """
         raise NotImplementedError("This provider does not support resume")
 
+    def resume_stream(self, thread_id: str, user_input: str) -> AsyncIterator[str]:
+        """Resume an interrupted conversation with streaming stage updates.
+
+        Args:
+            thread_id: Unique thread identifier for the conversation
+            user_input: User's response to clarification question
+
+        Yields:
+            Stage indicator JSON messages followed by final result
+        """
+        raise NotImplementedError("This provider does not support streaming resume")
+
 
 class ICheckpointManager(ABC):
     """Interface for managing LangGraph checkpoint data."""

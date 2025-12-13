@@ -136,6 +136,20 @@ class ResumeConversationUseCase:
     def __init__(self, llm_provider: ILLMProvider):
         self.llm_provider = llm_provider
 
+    async def execute_stream(self, request: ResumeConversationRequest):
+        """Execute resume with streaming response for stage indicators.
+        
+        Yields:
+            Stage and result chunks from the provider's resume_stream method
+        """
+        if not request.user_input.strip():
+            raise InvalidMessageException("User input cannot be empty")
+
+        async for chunk in self.llm_provider.resume_stream(
+            request.thread_id, request.user_input
+        ):
+            yield chunk
+
     async def execute(self, request: ResumeConversationRequest) -> ResumeConversationResponse:
         """Resume an interrupted conversation with user's clarification.
         

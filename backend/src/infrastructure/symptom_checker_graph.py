@@ -12,7 +12,7 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langchain_core.messages import AnyMessage, SystemMessage, HumanMessage
-from langchain_openai import ChatOpenAI
+from langchain_anthropic import ChatAnthropic
 from langgraph.types import interrupt
 from langgraph.graph.state import CompiledStateGraph
 
@@ -554,7 +554,7 @@ def should_continue_or_end_refinement(state: SymptomCheckerState) -> str:
 
 def build_symptom_checker_graph(
     api_key: str,
-    model_name: str = "gpt-4o-mini",
+    model_name: str = "claude-sonnet-4-20250514",
     temperature: float = 0.3,
     reasoning_effort: str | None = None,
     checkpointer: BaseCheckpointSaver | None = None,
@@ -568,27 +568,20 @@ def build_symptom_checker_graph(
     → refine_ddx → generate_refinement_question (loop) OR generate_final_summary → END
     
     Args:
-        api_key: OpenAI API key
-        model_name: Name of the OpenAI model to use
+        api_key: Anthropic API key
+        model_name: Name of the Anthropic model to use
         temperature: Temperature for LLM responses
-        reasoning_effort: Reasoning effort for reasoning models (none, low, medium, high)
+        reasoning_effort: Unused (kept for API compatibility)
         checkpointer: Pre-initialized checkpointer (required for persistence)
         
     Returns:
         Compiled graph ready for use
     """
-    # Create base model with optional reasoning effort for reasoning models
-    model_kwargs = {
-        "model": model_name,
-        "temperature": temperature,
-        "api_key": api_key,
-    }
-    
-    # Add reasoning_effort for reasoning models (gpt-5.1, o1, o3, etc.)
-    if reasoning_effort:
-        model_kwargs["reasoning_effort"] = reasoning_effort
-    
-    base_model = ChatOpenAI(**model_kwargs)
+    base_model = ChatAnthropic(
+        model=model_name,
+        temperature=temperature,
+        api_key=api_key,
+    )
     
     # Create structured output models for each node
     questions_model = base_model.with_structured_output(PreliminaryQuestions)

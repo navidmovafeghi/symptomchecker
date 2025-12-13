@@ -5,7 +5,7 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     """Application settings loaded from environment."""
-    openai_api_key: Optional[str] = None
+    anthropic_api_key: Optional[str] = None
     cors_origins: str = "http://localhost:3000"
     checkpoint_db_path: str = "checkpoints.db"
 

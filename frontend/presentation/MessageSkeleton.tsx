@@ -1,13 +1,20 @@
 /**
  * MessageSkeleton - Animated placeholder while waiting for AI response.
- * Shows "Thinking..." text with shimmer effect bars.
+ * Shows stage-aware status text with shimmer effect bars.
  */
 
 'use client';
 
 import { Bot } from 'lucide-react';
 
-export function MessageSkeleton() {
+interface MessageSkeletonProps {
+  /** Current processing stage message (e.g., "Preparing screening questions") */
+  stageMessage?: string | null;
+}
+
+export function MessageSkeleton({ stageMessage }: MessageSkeletonProps) {
+  const displayText = stageMessage || 'Thinking';
+  
   return (
     <div className="flex w-full justify-start animate-fade-in">
       <div className="flex max-w-[80%] gap-3">
@@ -20,9 +27,9 @@ export function MessageSkeleton() {
 
         {/* Skeleton content */}
         <div className="flex flex-col gap-2 py-2">
-          {/* Thinking text */}
+          {/* Stage-aware status text */}
           <div className="flex items-center gap-2 text-sm text-gray-500">
-            <span className="thinking-text">Thinking</span>
+            <span className="thinking-text">{displayText}</span>
             <span className="thinking-dots">
               <span className="dot-bounce dot-bounce-1">.</span>
               <span className="dot-bounce dot-bounce-2">.</span>

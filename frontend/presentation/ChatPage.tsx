@@ -31,6 +31,7 @@ export function ChatPage() {
     checkpointExpired,
     checkpointExpiredMessage,
     clearCheckpointExpired,
+    currentStageMessage,
   } = useChatViewModel();
 
   const handleStartNewConversation = () => {
@@ -276,36 +277,54 @@ export function ChatPage() {
                           </div>
                         )}
 
-                        {/* Multi-question format */}
+                        {/* Multi-question format - Card-based layout */}
                         {message.isQuestion && message.questions && message.questions.length > 0 && (
-                          <div className="mt-4 pt-4 border-t border-gray-200 space-y-4">
+                          <div className="mt-4 space-y-3">
                             {message.questions.map((q, qIdx) => (
-                              <div key={qIdx} className="space-y-2">
-                                <p className="text-sm font-medium text-gray-700">
-                                  {q.question_number}. {q.question}
-                                </p>
-                                <div className="flex flex-wrap gap-2">
-                                  {q.options.map((option, optIdx) => (
-                                    <button
-                                      key={optIdx}
-                                      onClick={() => handleMultiAnswerChange(qIdx, option)}
-                                      disabled={isLoading}
-                                      className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors disabled:opacity-50 ${
-                                        multiAnswers[qIdx] === option
-                                          ? 'bg-blue-600 text-white'
-                                          : 'bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-600'
-                                      }`}
-                                    >
-                                      {option}
-                                    </button>
-                                  ))}
+                              <div 
+                                key={qIdx} 
+                                className={`p-4 rounded-xl border transition-all duration-200 ${
+                                  multiAnswers[qIdx] 
+                                    ? 'bg-violet-50 border-violet-200 shadow-sm' 
+                                    : 'bg-white border-gray-200 hover:border-gray-300 hover:shadow-sm'
+                                }`}
+                              >
+                                <div className="flex items-start gap-3">
+                                  <span className={`flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-semibold ${
+                                    multiAnswers[qIdx] 
+                                      ? 'bg-violet-600 text-white' 
+                                      : 'bg-gray-200 text-gray-600'
+                                  }`}>
+                                    {q.question_number}
+                                  </span>
+                                  <div className="flex-1 space-y-3">
+                                    <p className="text-sm font-medium text-gray-800">
+                                      {q.question}
+                                    </p>
+                                    <div className="flex flex-wrap gap-2">
+                                      {q.options.map((option, optIdx) => (
+                                        <button
+                                          key={optIdx}
+                                          onClick={() => handleMultiAnswerChange(qIdx, option)}
+                                          disabled={isLoading}
+                                          className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all duration-150 disabled:opacity-50 ${
+                                            multiAnswers[qIdx] === option
+                                              ? 'bg-violet-600 text-white shadow-sm'
+                                              : 'bg-gray-100 hover:bg-gray-200 text-gray-700 hover:text-gray-900'
+                                          }`}
+                                        >
+                                          {option}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
                                 </div>
                               </div>
                             ))}
                             <button
                               onClick={handleMultiAnswerSubmit}
                               disabled={isLoading || !multiAnswers.every(a => a.trim())}
-                              className="mt-4 px-6 py-2 bg-violet-600 hover:bg-violet-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                              className="w-full mt-2 px-6 py-2.5 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-sm font-medium transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm hover:shadow-md"
                             >
                               Submit Answers
                             </button>
@@ -316,7 +335,7 @@ export function ChatPage() {
                   </div>
                 ))}
 
-                {isLoading && !isStreaming && <MessageSkeleton />}
+                {isLoading && !isStreaming && <MessageSkeleton stageMessage={currentStageMessage} />}
 
                 <div ref={messagesEndRef} />
               </>

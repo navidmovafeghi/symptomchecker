@@ -11,11 +11,11 @@ from .config import settings
 
 def _create_llm_provider():
     """Factory function to create the LLM provider."""
-    if not settings.openai_api_key:
-        raise ValueError("OPENAI_API_KEY is required")
+    if not settings.anthropic_api_key:
+        raise ValueError("ANTHROPIC_API_KEY is required")
     
     return SymptomCheckerProvider(
-        api_key=settings.openai_api_key,
+        api_key=settings.anthropic_api_key,
         checkpoint_db_path=settings.checkpoint_db_path,
     )
 

@@ -57,18 +57,18 @@ class SymptomCheckerProvider(ILLMProvider, ICheckpointManager):
         self,
         api_key: str,
         checkpoint_db_path: str = "checkpoints.db",
-        model_name: str = "gpt-5.1",
+        model_name: str = "claude-sonnet-4-20250514",
         temperature: float = 0.3,
         reasoning_effort: str = "medium",
     ):
         """Initialize the SymptomCheckerProvider.
         
         Args:
-            api_key: OpenAI API key
+            api_key: Anthropic API key
             checkpoint_db_path: Path to SQLite database for checkpointing
-            model_name: Name of the OpenAI model to use (default: gpt-5.1)
+            model_name: Name of the Anthropic model to use (default: claude-sonnet-4-20250514)
             temperature: Temperature for LLM responses
-            reasoning_effort: Reasoning effort for reasoning models (none, low, medium, high)
+            reasoning_effort: Unused (kept for API compatibility)
         """
         self.api_key = api_key
         self.checkpoint_db_path = checkpoint_db_path
@@ -223,6 +223,27 @@ class SymptomCheckerProvider(ILLMProvider, ICheckpointManager):
                 "final_summary": None,
             }
             
+            # Map node names to user-friendly stage descriptions
+            # Note: generate_refinement_question is skipped because we don't know yet
+            # if we'll actually ask the question. collect_refinement_answer shows
+            # "Preparing follow-up question" since that's when we know we're asking.
+            stage_descriptions = {
+                "generate_questions": "Preparing screening questions",
+                "collect_answers": "Processing your answers",
+                "generate_ddx": "Analyzing symptoms",
+                "generate_refinement_question": "Preparing follow-up question",  # Skipped in code
+                "collect_refinement_answer": "Preparing follow-up question",
+                "refine_ddx": "Refining diagnosis",
+                "generate_final_summary": "Preparing your assessment",
+            }
+            
+            # Yield initial stage before graph starts
+            yield json.dumps({
+                "type": "stage",
+                "stage": "generate_questions",
+                "message": "Preparing screening questions"
+            }) + "\n"
+            
             # Stream the graph execution
             async for event in self._graph.astream(initial_state, config, stream_mode="updates"):
                 # Check for interrupt
@@ -238,7 +259,7 @@ class SymptomCheckerProvider(ILLMProvider, ICheckpointManager):
                                 "questions": interrupt_value.get("questions", []),
                                 "total_questions": interrupt_value.get("total_questions", 0),
                                 "thread_id": thread_id or "default"
-                            })
+                            }) + "\n"
                             return
                         
                         # Handle single-question interrupt (refinement questions)
@@ -251,11 +272,26 @@ class SymptomCheckerProvider(ILLMProvider, ICheckpointManager):
                                 "question": question,
                                 "options": options,
                                 "thread_id": thread_id or "default"
-                            })
+                            }) + "\n"
                             return
                 
-                # Check for final summary in the event
+                # Check for stage updates and final summary
                 for node_name, node_output in event.items():
+                    # Send stage indicator for known nodes
+                    if node_name in stage_descriptions:
+                        # Skip generate_refinement_question - we don't know yet if we'll
+                        # actually ask the question or skip to final summary.
+                        # The "Preparing follow-up question" message will be shown when
+                        # collect_refinement_answer runs (meaning we're actually asking).
+                        if node_name == "generate_refinement_question":
+                            continue
+                        
+                        yield json.dumps({
+                            "type": "stage",
+                            "stage": node_name,
+                            "message": stage_descriptions[node_name]
+                        }) + "\n"
+                    
                     if node_name == "generate_final_summary" and node_output:
                         final_summary = node_output.get("final_summary")
                         if final_summary:
@@ -372,7 +408,7 @@ class SymptomCheckerProvider(ILLMProvider, ICheckpointManager):
 {final_summary.disclaimer}"""
                             return {
                                 "type": "complete",
-                                "response": response,
+                                "content": response,
                                 "thread_id": thread_id,
                             }
             
@@ -391,13 +427,13 @@ class SymptomCheckerProvider(ILLMProvider, ICheckpointManager):
 {final_summary.disclaimer}"""
                     return {
                         "type": "complete",
-                        "response": response,
+                        "content": response,
                         "thread_id": thread_id,
                     }
             
             return {
                 "type": "complete",
-                "response": "Assessment complete. Please consult a healthcare provider for proper diagnosis.",
+                "content": "Assessment complete. Please consult a healthcare provider for proper diagnosis.",
                 "thread_id": thread_id,
             }
                 
@@ -405,6 +441,167 @@ class SymptomCheckerProvider(ILLMProvider, ICheckpointManager):
             raise
         except Exception as e:
             raise LLMProviderException(f"SymptomCheckerProvider resume error: {str(e)}")
+
+    async def resume_stream(self, thread_id: str, user_input: str) -> AsyncIterator[str]:
+        """Resume an interrupted conversation with streaming stage updates.
+        
+        Yields stage indicator JSON messages as processing progresses,
+        followed by the final interrupt or complete JSON message.
+        
+        Args:
+            thread_id: Unique thread identifier for the conversation
+            user_input: User's response to the interrupt question (can be JSON for multi-answer)
+            
+        Yields:
+            Stage indicator JSON messages (type: "stage")
+            Final interrupt or complete JSON message
+            
+        Raises:
+            CheckpointNotFoundException: If no checkpoint exists for thread_id
+            LLMProviderException: If an error occurs during resumption
+        """
+        try:
+            await self._ensure_initialized()
+            
+            config = {"configurable": {"thread_id": thread_id}}
+            
+            # Check if checkpoint exists
+            state = await self._graph.aget_state(config)
+            if state is None or state.values is None:
+                raise CheckpointNotFoundException(
+                    f"No checkpoint found for thread_id: {thread_id}"
+                )
+            
+            # Parse user_input if it's JSON (for multi-answer format)
+            parsed_input: Any = user_input
+            try:
+                parsed = json.loads(user_input)
+                if isinstance(parsed, dict) and "answers" in parsed:
+                    parsed_input = parsed
+                elif isinstance(parsed, list):
+                    parsed_input = parsed
+            except (json.JSONDecodeError, TypeError):
+                pass
+            
+            # Map node names to user-friendly stage descriptions
+            # Note: generate_refinement_question is skipped because we don't know yet
+            # if we'll actually ask the question. collect_refinement_answer shows
+            # "Preparing follow-up question" since that's when we know we're asking.
+            stage_descriptions = {
+                "generate_questions": "Preparing screening questions",
+                "collect_answers": "Processing your answers",
+                "generate_ddx": "Analyzing symptoms",
+                "generate_refinement_question": "Preparing follow-up question",  # Skipped in code
+                "collect_refinement_answer": "Preparing follow-up question",
+                "refine_ddx": "Refining diagnosis",
+                "generate_final_summary": "Preparing your assessment",
+            }
+            
+            # Yield initial stage message before graph execution
+            yield json.dumps({
+                "type": "stage",
+                "stage": "processing",
+                "message": "Processing your answers"
+            }) + "\n"
+            
+            # Resume with user input using Command
+            resume_command = Command(resume=parsed_input)
+            
+            # Stream the resumed execution
+            async for event in self._graph.astream(resume_command, config, stream_mode="updates"):
+                # Check for another interrupt
+                if "__interrupt__" in event:
+                    interrupt_data = event["__interrupt__"]
+                    if interrupt_data and len(interrupt_data) > 0:
+                        interrupt_value = interrupt_data[0].value
+                        
+                        # Handle multi-question interrupt (preliminary questions)
+                        if "questions" in interrupt_value:
+                            yield json.dumps({
+                                "type": "interrupt",
+                                "questions": interrupt_value.get("questions", []),
+                                "total_questions": interrupt_value.get("total_questions", 0),
+                                "thread_id": thread_id,
+                            }) + "\n"
+                            return
+                        
+                        # Handle single-question interrupt (refinement questions)
+                        question = interrupt_value.get("question", "")
+                        options = interrupt_value.get("options", [])
+                        
+                        yield json.dumps({
+                            "type": "interrupt",
+                            "question": question,
+                            "options": options,
+                            "thread_id": thread_id,
+                        }) + "\n"
+                        return
+                
+                # Check for stage updates and final summary
+                for node_name, node_output in event.items():
+                    # Send stage indicator for known nodes
+                    if node_name in stage_descriptions:
+                        # Skip generate_refinement_question - we don't know yet if we'll
+                        # actually ask the question or skip to final summary.
+                        # The "Preparing follow-up question" message will be shown when
+                        # collect_refinement_answer runs (meaning we're actually asking).
+                        if node_name == "generate_refinement_question":
+                            continue
+                        
+                        yield json.dumps({
+                            "type": "stage",
+                            "stage": node_name,
+                            "message": stage_descriptions[node_name]
+                        }) + "\n"
+                    
+                    if node_name == "generate_final_summary" and node_output:
+                        final_summary = node_output.get("final_summary")
+                        if final_summary:
+                            response = f"""Based on our conversation, here's my assessment:
+
+**Most Likely Diagnosis:** {final_summary.top_diagnosis}
+**Confidence:** {final_summary.probability:.0%}
+
+{final_summary.explanation}
+
+{final_summary.disclaimer}"""
+                            yield json.dumps({
+                                "type": "complete",
+                                "content": response,
+                                "thread_id": thread_id,
+                            }) + "\n"
+                            return
+            
+            # If we get here, check the final state
+            final_state = await self._graph.aget_state(config)
+            if final_state and final_state.values:
+                final_summary = final_state.values.get("final_summary")
+                if final_summary:
+                    response = f"""Based on our conversation, here's my assessment:
+
+**Most Likely Diagnosis:** {final_summary.top_diagnosis}
+**Confidence:** {final_summary.probability:.0%}
+
+{final_summary.explanation}
+
+{final_summary.disclaimer}"""
+                    yield json.dumps({
+                        "type": "complete",
+                        "content": response,
+                        "thread_id": thread_id,
+                    }) + "\n"
+                    return
+            
+            yield json.dumps({
+                "type": "complete",
+                "content": "Assessment complete. Please consult a healthcare provider for proper diagnosis.",
+                "thread_id": thread_id,
+            }) + "\n"
+                
+        except CheckpointNotFoundException:
+            raise
+        except Exception as e:
+            raise LLMProviderException(f"SymptomCheckerProvider resume_stream error: {str(e)}")
 
     async def delete_checkpoint(self, thread_id: str) -> bool:
         """Delete checkpoint data for a thread.

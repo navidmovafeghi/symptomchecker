@@ -24,6 +24,7 @@ export class IndexedDBStorageService implements IStorageService {
   /**
    * Static method to check if IndexedDB is supported in the current environment.
    * Can be called before creating an instance.
+   * This is a quick sync check - use verifyIndexedDBAccess() for thorough async check.
    * Requirements: 1.4, 5.3
    */
   static checkIndexedDBSupport(): boolean {
@@ -32,23 +33,55 @@ export class IndexedDBStorageService implements IStorageService {
       return false;
     }
     
-    // Additional check for private browsing mode in some browsers
-    // where IndexedDB exists but throws errors
+    // Just check if indexedDB exists - don't try to open it here
+    // The actual access test is done in verifyIndexedDBAccess()
     try {
-      // Try to access indexedDB - some browsers throw in private mode
-      const testRequest = indexedDB.open('__test__');
-      testRequest.onerror = () => {
-        // Clean up
-        indexedDB.deleteDatabase('__test__');
-      };
-      testRequest.onsuccess = () => {
-        testRequest.result.close();
-        indexedDB.deleteDatabase('__test__');
-      };
-      return true;
+      return typeof indexedDB.open === 'function';
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Async method to verify IndexedDB actually works (not just exists).
+   * This catches cases where indexedDB exists but operations fail.
+   * Requirements: 1.4, 5.3
+   */
+  static async verifyIndexedDBAccess(): Promise<boolean> {
+    if (typeof indexedDB === 'undefined') {
+      return false;
+    }
+
+    return new Promise((resolve) => {
+      try {
+        const testRequest = indexedDB.open('__access_test__');
+        
+        testRequest.onerror = () => {
+          // Storage access denied
+          try {
+            indexedDB.deleteDatabase('__access_test__');
+          } catch {
+            // Ignore cleanup errors
+          }
+          resolve(false);
+        };
+        
+        testRequest.onsuccess = () => {
+          try {
+            testRequest.result.close();
+            indexedDB.deleteDatabase('__access_test__');
+          } catch {
+            // Ignore cleanup errors
+          }
+          resolve(true);
+        };
+
+        // Timeout fallback - if neither callback fires in 3s, assume failure
+        setTimeout(() => resolve(false), 3000);
+      } catch {
+        resolve(false);
+      }
+    });
   }
 
   /**
