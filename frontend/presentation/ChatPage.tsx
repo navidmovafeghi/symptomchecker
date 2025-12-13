@@ -264,16 +264,22 @@ export function ChatPage() {
                   <div
                     key={message.id}
                     className={`flex w-full ${
-                      message.role === 'user' 
-                        ? (direction === 'rtl' ? 'justify-start' : 'justify-end')
-                        : (direction === 'rtl' ? 'justify-end' : 'justify-start')
+                      direction === 'rtl'
+                        ? (message.role === 'user' 
+                            ? 'justify-start md:justify-start' // Mobile: right, Desktop: right (user on right in RTL)
+                            : 'justify-start md:justify-end') // Mobile: right, Desktop: left (AI on left in RTL desktop)
+                        : (message.role === 'user' ? 'justify-end' : 'justify-start')
                     }`}
                     data-testid={`message-${message.role}`}
                   >
-                    <div className={`flex max-w-[80%] gap-3 ${
-                      message.role === 'user' 
-                        ? (direction === 'rtl' ? 'flex-row' : 'flex-row-reverse')
-                        : (direction === 'rtl' ? 'flex-row-reverse' : 'flex-row')
+                    <div className={`flex gap-3 ${
+                      direction === 'rtl'
+                        ? (message.role === 'user'
+                            ? 'max-w-[80%] flex-row'
+                            : 'max-w-[95%] sm:max-w-[85%] flex-row md:flex-row-reverse')
+                        : (message.role === 'user' 
+                            ? 'max-w-[80%] flex-row-reverse'
+                            : 'max-w-[95%] sm:max-w-[85%] flex-row')
                     }`}>
                       <div className="flex-shrink-0">
                         {message.role === 'assistant' ? (
@@ -354,13 +360,13 @@ export function ChatPage() {
                                     <p className="text-sm font-medium text-gray-800">
                                       {q.question}
                                     </p>
-                                    <div className="flex flex-wrap gap-2">
+                                    <div className="grid grid-cols-2 gap-2 w-full">
                                       {q.options.map((option, optIdx) => (
                                         <button
                                           key={optIdx}
                                           onClick={() => handleMultiAnswerChange(qIdx, option)}
                                           disabled={isLoading}
-                                          className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all duration-150 disabled:opacity-50 ${
+                                          className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all duration-150 disabled:opacity-50 text-center ${
                                             multiAnswers[qIdx] === option
                                               ? 'bg-violet-600 text-white shadow-sm'
                                               : 'bg-gray-100 hover:bg-gray-200 text-gray-700 hover:text-gray-900'
