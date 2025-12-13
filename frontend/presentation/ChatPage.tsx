@@ -6,11 +6,14 @@
 
 import { useState, useEffect, useRef, KeyboardEvent } from 'react';
 import { useChatViewModel } from '@/viewmodels/useChatViewModel';
-import { useLocale, Direction } from '@/contexts/LocaleContext';
+import { useLocale } from '@/contexts/LocaleContext';
 import { Sidebar } from './Sidebar';
 import ReactMarkdown from 'react-markdown';
-import { Menu, X, Bot, User, Send } from 'lucide-react';
+import { Menu, X, Bot, User, Send, Stethoscope } from 'lucide-react';
 import { MessageSkeleton } from './MessageSkeleton';
+import { GraphVisualization } from './GraphVisualization';
+import { readIsExpanded, writeIsExpanded } from '@/utils/graphStorageHelpers';
+import { GraphNodeId } from '@/types/graph';
 
 export function ChatPage() {
   const {
@@ -25,6 +28,7 @@ export function ChatPage() {
     isWaitingForInput,
     pendingOptions,
     pendingQuestions,
+    pendingQuestion,
     storageError,
     isStorageAvailable,
     clearStorageError,
@@ -33,6 +37,11 @@ export function ChatPage() {
     checkpointExpiredMessage,
     clearCheckpointExpired,
     currentStageMessage,
+    currentStageData,
+    stagesLiveData,
+    // Graph state from Zustand (single source of truth)
+    // Requirements: 1.1, 1.2
+    graphState,
   } = useChatViewModel();
 
   const handleStartNewConversation = () => {
@@ -55,12 +64,31 @@ export function ChatPage() {
   // State for multi-question answers
   const [multiAnswers, setMultiAnswers] = useState<string[]>([]);
   
+  // Graph visualization state - only isExpanded is local state for UI toggle
+  // Requirements: 1.1, 1.4 - Graph state comes from Zustand store
+  const [isGraphExpanded, setIsGraphExpanded] = useState(false);
+  
   // Localization
   const { t, direction, locale } = useLocale();
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // Load graph panel expanded state from localStorage on mount - Requirements: 1.4
+  useEffect(() => {
+    setIsGraphExpanded(readIsExpanded());
+  }, []);
+
+  // Stage tracking is now handled by GraphStateService in the ViewModel
+  // Requirements: 1.1, 1.2 - Zustand store is the single source of truth
+
+  // Handle graph panel toggle with localStorage persistence - Requirements: 1.2, 1.3, 1.4
+  const handleGraphToggle = () => {
+    const newState = !isGraphExpanded;
+    setIsGraphExpanded(newState);
+    writeIsExpanded(newState);
+  };
 
   // Reset multi-answers when pendingQuestions changes
   useEffect(() => {
@@ -134,9 +162,13 @@ export function ChatPage() {
       )}
 
       {/* Main Chat Panel - floating rounded card */}
-      <div className="flex-1 h-full p-4 md:p-6">
+      <div 
+        className={`flex-1 h-full p-4 md:p-6 transition-all duration-300 ${
+          isGraphExpanded ? 'mr-80' : ''
+        }`}
+        data-testid="chat-panel-container"
+      >
         <div className="h-full bg-white/90 backdrop-blur-md rounded-3xl flex flex-col overflow-hidden shadow-sm">
-
           {/* Storage Unavailable Warning */}
           {!isStorageAvailable && (
             <div className="bg-amber-50 border-b border-amber-200 px-4 py-3">
@@ -195,30 +227,33 @@ export function ChatPage() {
           <div className="flex-1 overflow-y-auto custom-scrollbar p-6 space-y-4">
             {messages.length === 0 && !isLoading ? (
               <div className="flex flex-col items-center justify-center h-full text-center px-4">
-                <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center text-white mb-4">
-                  <Bot size={28} />
+                <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-teal-500 to-emerald-600 flex items-center justify-center text-white mb-4 shadow-lg">
+                  <Stethoscope size={32} />
                 </div>
                 <h2 className="text-xl font-semibold text-gray-800 mb-2">{t('chat.howCanIHelp')}</h2>
-                <p className="text-gray-500 text-sm mb-8 max-w-md">
+                <p className="text-gray-500 text-sm mb-6 max-w-md">
                   {t('chat.aiAssistantIntro')}
+                </p>
+                <p className="text-xs text-amber-600 bg-amber-50 px-4 py-2 rounded-lg mb-6 max-w-md">
+                  {t('medical.disclaimer')}
                 </p>
                 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3 w-full max-w-lg">
                   {[
-                    { text: t('suggestions.explainConcept'), desc: t('suggestions.explainConceptDesc') },
-                    { text: t('suggestions.writeContent'), desc: t('suggestions.writeContentDesc') },
-                    { text: t('suggestions.answerQuestions'), desc: t('suggestions.answerQuestionsDesc') },
-                    { text: t('suggestions.brainstormIdeas'), desc: t('suggestions.brainstormIdeasDesc') },
+                    { text: t('suggestions.headache'), desc: t('suggestions.headacheDesc') },
+                    { text: t('suggestions.stomachPain'), desc: t('suggestions.stomachPainDesc') },
+                    { text: t('suggestions.fever'), desc: t('suggestions.feverDesc') },
+                    { text: t('suggestions.fatigue'), desc: t('suggestions.fatigueDesc') },
                   ].map((item, idx) => (
                     <button
                       key={idx}
                       onClick={() => {
                         setInput(item.text);
                       }}
-                      className={`p-4 bg-gray-50 hover:bg-gray-100 rounded-xl transition-colors group ${direction === 'rtl' ? 'text-right' : 'text-left'}`}
+                      className={`p-4 bg-teal-50 hover:bg-teal-100 border border-teal-100 rounded-xl transition-colors group ${direction === 'rtl' ? 'text-right' : 'text-left'}`}
                     >
-                      <p className="text-sm font-medium text-gray-700 group-hover:text-gray-900">{item.text}</p>
-                      <p className="text-xs text-gray-400 mt-1">{item.desc}</p>
+                      <p className="text-sm font-medium text-teal-700 group-hover:text-teal-800">{item.text}</p>
+                      <p className="text-xs text-teal-500 mt-1">{item.desc}</p>
                     </button>
                   ))}
                 </div>
@@ -397,6 +432,21 @@ export function ChatPage() {
           </div>
         </div>
       </div>
+
+      {/* Graph Visualization - Page-level Right Sidebar */}
+      {/* Requirements: 1.1, 1.2 - GraphVisualization reads from Zustand store */}
+      {/* Requirements: 11.2, 11.3 - Stage field used directly as GraphNodeId */}
+      <GraphVisualization
+        isExpanded={isGraphExpanded}
+        onToggle={handleGraphToggle}
+        // Legacy props passed for backward compatibility, but Zustand state is preferred
+        currentStage={graphState.currentStage}
+        completedStages={graphState.completedStages}
+        stagesLiveData={stagesLiveData}
+        liveData={currentStageData as Record<string, unknown> | undefined}
+        isWaitingForInput={isWaitingForInput}
+        waitingNodeId={graphState.waitingNodeId}
+      />
     </div>
   );
 }

@@ -2,12 +2,18 @@
 
 import { ReactNode, useEffect } from 'react';
 import { LocaleProvider, useLocale } from '@/contexts/LocaleContext';
+import { useBeforeUnloadWarning } from '@/utils/useBeforeUnloadWarning';
 
 /**
  * Inner component that applies locale-based attributes to the document
+ * and handles global app-level effects like beforeunload warnings.
  */
 function LocaleAttributeHandler({ children }: { children: ReactNode }) {
   const { locale, direction } = useLocale();
+
+  // Register beforeunload warning when there are pending saves
+  // Requirements: 5.3
+  useBeforeUnloadWarning();
 
   useEffect(() => {
     // Update document attributes when locale changes

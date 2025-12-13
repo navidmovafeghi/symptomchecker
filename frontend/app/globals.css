@@ -4,21 +4,43 @@
 @import "tailwindcss";
 @plugin "tailwindcss-animate";
 
-/* Persian font family - Vazirmatn is loaded via layout.tsx */
+/* Kalameh Persian font - loaded from local fonts folder */
+@font-face {
+  font-family: 'Kalameh';
+  src: url('/fonts/KalamehWeb-Regular.woff2') format('woff2'),
+       url('/fonts/Kalameh-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Persian font family - Kalameh loaded locally */
 :root {
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --font-persian: 'Vazirmatn', 'Tahoma', 'Arial', sans-serif;
+  --font-persian: 'Kalameh', 'Tahoma', 'Arial', sans-serif;
 }
 
 /* Apply Persian font when locale is Persian */
-[data-locale="fa"] {
-  font-family: var(--font-persian);
+[data-locale="fa"],
+[data-locale="fa"] * {
+  font-family: var(--font-persian) !important;
 }
 
 [data-locale="fa"] input,
 [data-locale="fa"] textarea,
-[data-locale="fa"] button {
-  font-family: var(--font-persian);
+[data-locale="fa"] button,
+[data-locale="fa"] select,
+[data-locale="fa"] label,
+[data-locale="fa"] p,
+[data-locale="fa"] span,
+[data-locale="fa"] div,
+[data-locale="fa"] h1,
+[data-locale="fa"] h2,
+[data-locale="fa"] h3,
+[data-locale="fa"] h4,
+[data-locale="fa"] h5,
+[data-locale="fa"] h6 {
+  font-family: var(--font-persian) !important;
 }
 
 /* Clean, minimalistic base styles */

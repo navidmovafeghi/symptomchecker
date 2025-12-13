@@ -51,6 +51,19 @@ export interface StoredMessage {
 }
 
 /**
+ * Stored graph state for persistence.
+ * Requirements: 3.1, 3.2, 3.3
+ */
+export interface StoredGraphState {
+  /** Array of completed node IDs in execution order */
+  completed_stages: string[];
+  /** Node currently waiting for user input (interrupt) */
+  waiting_node_id: string | null;
+  /** Live data accumulated for each stage */
+  stages_live_data: Record<string, Record<string, unknown>>;
+}
+
+/**
  * Stored conversation structure in IndexedDB.
  */
 export interface StoredConversation {
@@ -66,6 +79,8 @@ export interface StoredConversation {
   pending_options?: string[];
   /** Multiple pending questions (multi-question mode) */
   pending_questions?: StoredQuestionWithOptions[];
+  /** Graph visualization state (optional for backward compatibility) */
+  graph_state?: StoredGraphState;
 }
 
 /**

@@ -189,6 +189,69 @@ class SymptomCheckerProvider(ILLMProvider, ICheckpointManager):
             self._graph = None
             self._initialized = False
 
+    def _extract_live_data(self, node_name: str, node_output: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract live data from node output for frontend display.
+        
+        Args:
+            node_name: Name of the graph node
+            node_output: Output from the node execution
+            
+        Returns:
+            Dict with relevant live data for the node
+        """
+        live_data: Dict[str, Any] = {}
+        
+        if not node_output:
+            return live_data
+        
+        if node_name == "generate_questions":
+            pq = node_output.get("preliminary_questions")
+            if pq and hasattr(pq, 'preliminary_questions'):
+                live_data["question_count"] = len(pq.preliminary_questions)
+                live_data["questions"] = [q.question for q in pq.preliminary_questions]
+        
+        elif node_name == "collect_answers":
+            qa_pairs = node_output.get("qa_pairs")
+            if qa_pairs:
+                live_data["answers_collected"] = len(qa_pairs)
+        
+        elif node_name == "generate_ddx":
+            ddx = node_output.get("differential_diagnosis")
+            if ddx and hasattr(ddx, 'differential'):
+                live_data["diagnosis_count"] = len(ddx.differential)
+                if ddx.differential:
+                    top = ddx.differential[0]
+                    live_data["top_diagnosis"] = top.condition
+                    live_data["top_probability"] = round(top.probability * 100)
+        
+        elif node_name == "collect_refinement_answer":
+            refinement_qa = node_output.get("refinement_qa_pairs")
+            if refinement_qa:
+                live_data["refinement_round"] = len(refinement_qa)
+            # Also check refinement_count from state for consistency
+            count = node_output.get("refinement_count", 0)
+            if count > 0 and "refinement_round" not in live_data:
+                live_data["refinement_round"] = count
+        
+        elif node_name == "refine_ddx":
+            refined = node_output.get("refined_ddx")
+            count = node_output.get("refinement_count", 0)
+            live_data["refinement_count"] = count
+            # Include refinement_round for UI display (Requirements 2.4, 6.1, 6.2)
+            live_data["refinement_round"] = count
+            if refined and hasattr(refined, 'differential') and refined.differential:
+                top = refined.differential[0]
+                live_data["top_diagnosis"] = top.condition
+                live_data["top_probability"] = round(top.probability * 100)
+        
+        elif node_name == "generate_final_summary":
+            summary = node_output.get("final_summary")
+            if summary:
+                live_data["final_diagnosis"] = summary.top_diagnosis
+                live_data["confidence"] = round(summary.probability * 100)
+        
+        return live_data
+
     async def generate_response(
         self, messages: List[dict], thread_id: Optional[str] = None, language: str = 'en'
     ) -> str:
@@ -279,14 +342,14 @@ class SymptomCheckerProvider(ILLMProvider, ICheckpointManager):
             
             # Map node names to user-friendly stage descriptions (bilingual)
             # Note: generate_refinement_question is skipped because we don't know yet
-            # if we'll actually ask the question. collect_refinement_answer shows
-            # "Preparing follow-up question" since that's when we know we're asking.
+            # if we'll actually ask the question. collect_refinement_answer has its own
+            # distinct message "Collecting your response" to differentiate from generate_refinement_question.
             stage_descriptions_en = {
                 "generate_questions": "Preparing screening questions",
                 "collect_answers": "Processing your answers",
                 "generate_ddx": "Analyzing symptoms",
                 "generate_refinement_question": "Preparing follow-up question",  # Skipped in code
-                "collect_refinement_answer": "Preparing follow-up question",
+                "collect_refinement_answer": "Collecting your response",
                 "refine_ddx": "Refining diagnosis",
                 "generate_final_summary": "Preparing your assessment",
             }
@@ -295,7 +358,7 @@ class SymptomCheckerProvider(ILLMProvider, ICheckpointManager):
                 "collect_answers": "در حال پردازش پاسخ‌های شما",
                 "generate_ddx": "در حال تحلیل علائم",
                 "generate_refinement_question": "آماده‌سازی سوال تکمیلی",  # Skipped in code
-                "collect_refinement_answer": "آماده‌سازی سوال تکمیلی",
+                "collect_refinement_answer": "در حال دریافت پاسخ شما",
                 "refine_ddx": "اصلاح تشخیص",
                 "generate_final_summary": "آماده‌سازی ارزیابی شما",
             }
@@ -305,7 +368,8 @@ class SymptomCheckerProvider(ILLMProvider, ICheckpointManager):
             yield json.dumps({
                 "type": "stage",
                 "stage": "generate_questions",
-                "message": stage_descriptions["generate_questions"]
+                "message": stage_descriptions["generate_questions"],
+                "data": {"symptom": last_user_message}
             }) + "\n"
             
             # Stream the graph execution
@@ -345,15 +409,19 @@ class SymptomCheckerProvider(ILLMProvider, ICheckpointManager):
                     if node_name in stage_descriptions:
                         # Skip generate_refinement_question - we don't know yet if we'll
                         # actually ask the question or skip to final summary.
-                        # The "Preparing follow-up question" message will be shown when
+                        # The "Collecting your response" message will be shown when
                         # collect_refinement_answer runs (meaning we're actually asking).
                         if node_name == "generate_refinement_question":
                             continue
                         
+                        # Build live data payload based on node output
+                        live_data = self._extract_live_data(node_name, node_output)
+                        
                         yield json.dumps({
                             "type": "stage",
                             "stage": node_name,
-                            "message": stage_descriptions[node_name]
+                            "message": stage_descriptions[node_name],
+                            "data": live_data
                         }) + "\n"
                     
                     if node_name == "generate_final_summary" and node_output:
@@ -535,36 +603,32 @@ class SymptomCheckerProvider(ILLMProvider, ICheckpointManager):
             
             # Map node names to user-friendly stage descriptions (bilingual)
             # Note: generate_refinement_question is skipped because we don't know yet
-            # if we'll actually ask the question. collect_refinement_answer shows
-            # "Preparing follow-up question" since that's when we know we're asking.
+            # if we'll actually ask the question. collect_refinement_answer has its own
+            # distinct message "Collecting your response" to differentiate from generate_refinement_question.
             stage_descriptions_en = {
                 "generate_questions": "Preparing screening questions",
                 "collect_answers": "Processing your answers",
                 "generate_ddx": "Analyzing symptoms",
                 "generate_refinement_question": "Preparing follow-up question",  # Skipped in code
-                "collect_refinement_answer": "Preparing follow-up question",
+                "collect_refinement_answer": "Collecting your response",
                 "refine_ddx": "Refining diagnosis",
                 "generate_final_summary": "Preparing your assessment",
-                "processing": "Processing your answers",
             }
             stage_descriptions_fa = {
                 "generate_questions": "آماده‌سازی سوالات غربالگری",
                 "collect_answers": "در حال پردازش پاسخ‌های شما",
                 "generate_ddx": "در حال تحلیل علائم",
                 "generate_refinement_question": "آماده‌سازی سوال تکمیلی",  # Skipped in code
-                "collect_refinement_answer": "آماده‌سازی سوال تکمیلی",
+                "collect_refinement_answer": "در حال دریافت پاسخ شما",
                 "refine_ddx": "اصلاح تشخیص",
                 "generate_final_summary": "آماده‌سازی ارزیابی شما",
-                "processing": "در حال پردازش پاسخ‌های شما",
             }
             stage_descriptions = stage_descriptions_fa if language == 'fa' else stage_descriptions_en
             
-            # Yield initial stage message before graph execution
-            yield json.dumps({
-                "type": "stage",
-                "stage": "processing",
-                "message": stage_descriptions["processing"]
-            }) + "\n"
+            # Note: We no longer yield an initial "processing" pseudo-stage.
+            # Instead, the first stage event will be the actual LangGraph node name
+            # from the first event in the stream. This ensures consistency between
+            # initial and resume flows (Requirements 2.2, 2.3, 11.1).
             
             # Resume with user input using Command
             resume_command = Command(resume=parsed_input)
@@ -605,15 +669,19 @@ class SymptomCheckerProvider(ILLMProvider, ICheckpointManager):
                     if node_name in stage_descriptions:
                         # Skip generate_refinement_question - we don't know yet if we'll
                         # actually ask the question or skip to final summary.
-                        # The "Preparing follow-up question" message will be shown when
+                        # The "Collecting your response" message will be shown when
                         # collect_refinement_answer runs (meaning we're actually asking).
                         if node_name == "generate_refinement_question":
                             continue
                         
+                        # Build live data payload based on node output
+                        live_data = self._extract_live_data(node_name, node_output)
+                        
                         yield json.dumps({
                             "type": "stage",
                             "stage": node_name,
-                            "message": stage_descriptions[node_name]
+                            "message": stage_descriptions[node_name],
+                            "data": live_data
                         }) + "\n"
                     
                     if node_name == "generate_final_summary" and node_output:

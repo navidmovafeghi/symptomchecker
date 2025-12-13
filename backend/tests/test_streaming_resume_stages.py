@@ -116,6 +116,81 @@ def has_newline_delimiter(msg_str: str) -> bool:
 
 # ============== PROPERTY TESTS ==============
 
+# **Feature: graph-visualization-dataflow-fix, Property 1: Stage message mapping uniqueness**
+# *For any* two distinct node IDs in the graph, their corresponding stage messages SHALL be different strings.
+# **Validates: Requirements 2.2**
+
+# Stage descriptions from symptom_checker_provider.py (English)
+STAGE_DESCRIPTIONS_EN = {
+    "generate_questions": "Preparing screening questions",
+    "collect_answers": "Processing your answers",
+    "generate_ddx": "Analyzing symptoms",
+    "generate_refinement_question": "Preparing follow-up question",
+    "collect_refinement_answer": "Collecting your response",
+    "refine_ddx": "Refining diagnosis",
+    "generate_final_summary": "Preparing your assessment",
+}
+
+# Stage descriptions from symptom_checker_provider.py (Persian)
+STAGE_DESCRIPTIONS_FA = {
+    "generate_questions": "آماده‌سازی سوالات غربالگری",
+    "collect_answers": "در حال پردازش پاسخ‌های شما",
+    "generate_ddx": "در حال تحلیل علائم",
+    "generate_refinement_question": "آماده‌سازی سوال تکمیلی",
+    "collect_refinement_answer": "در حال دریافت پاسخ شما",
+    "refine_ddx": "اصلاح تشخیص",
+    "generate_final_summary": "آماده‌سازی ارزیابی شما",
+}
+
+
+@settings(max_examples=100)
+@given(
+    node_id_1=st.sampled_from(list(STAGE_DESCRIPTIONS_EN.keys())),
+    node_id_2=st.sampled_from(list(STAGE_DESCRIPTIONS_EN.keys())),
+)
+def test_property_1_stage_message_mapping_uniqueness_en(node_id_1: str, node_id_2: str):
+    """Property 1: Stage message mapping uniqueness (English).
+    
+    For any two distinct node IDs in the graph, their corresponding stage messages
+    SHALL be different strings.
+    
+    **Feature: graph-visualization-dataflow-fix, Property 1: Stage message mapping uniqueness**
+    **Validates: Requirements 2.2**
+    """
+    # If node IDs are different, their messages must be different
+    if node_id_1 != node_id_2:
+        message_1 = STAGE_DESCRIPTIONS_EN[node_id_1]
+        message_2 = STAGE_DESCRIPTIONS_EN[node_id_2]
+        
+        assert message_1 != message_2, \
+            f"Distinct nodes '{node_id_1}' and '{node_id_2}' must have different messages, " \
+            f"but both have: '{message_1}'"
+
+
+@settings(max_examples=100)
+@given(
+    node_id_1=st.sampled_from(list(STAGE_DESCRIPTIONS_FA.keys())),
+    node_id_2=st.sampled_from(list(STAGE_DESCRIPTIONS_FA.keys())),
+)
+def test_property_1_stage_message_mapping_uniqueness_fa(node_id_1: str, node_id_2: str):
+    """Property 1: Stage message mapping uniqueness (Persian).
+    
+    For any two distinct node IDs in the graph, their corresponding stage messages
+    SHALL be different strings.
+    
+    **Feature: graph-visualization-dataflow-fix, Property 1: Stage message mapping uniqueness**
+    **Validates: Requirements 2.2**
+    """
+    # If node IDs are different, their messages must be different
+    if node_id_1 != node_id_2:
+        message_1 = STAGE_DESCRIPTIONS_FA[node_id_1]
+        message_2 = STAGE_DESCRIPTIONS_FA[node_id_2]
+        
+        assert message_1 != message_2, \
+            f"Distinct nodes '{node_id_1}' and '{node_id_2}' must have different messages, " \
+            f"but both have: '{message_1}'"
+
+
 # **Feature: streaming-resume-stages, Property 2: Stage message structure validity**
 # *For any* stage message yielded by the backend resume_stream method, the message 
 # SHALL contain "type" equal to "stage", a non-empty "stage" field, and a non-empty "message" field.

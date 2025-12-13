@@ -635,6 +635,7 @@ def build_symptom_checker_graph(
         model=model_name,
         temperature=temperature,
         api_key=api_key,
+        max_tokens=4096,  # Ensure enough tokens for complete structured outputs
     )
     
     # Create structured output models for each node

@@ -50,7 +50,7 @@ class ApiService {
   async sendMessageStream(
     request: SendMessageRequest,
     onChunk: (chunk: string) => void,
-    onStage?: (stage: string, message: string) => void,
+    onStage?: (stage: string, message: string, data?: Record<string, unknown>) => void,
     locale?: string
   ): Promise<
     | { type: 'complete'; conversationId?: string }
@@ -140,8 +140,8 @@ class ApiService {
                 };
               }
             } else if (parsed.type === 'stage') {
-              // Stage update - notify callback
-              onStage?.(parsed.stage, parsed.message);
+              // Stage update - notify callback with live data
+              onStage?.(parsed.stage, parsed.message, parsed.data);
               continue; // Don't send stage JSON as chunk
             }
           } catch {
@@ -250,7 +250,7 @@ class ApiService {
   async resumeConversationStream(
     threadId: string,
     userInput: string | string[],
-    onStage?: (stage: string, message: string) => void,
+    onStage?: (stage: string, message: string, data?: Record<string, unknown>) => void,
     locale?: string
   ): Promise<
     | { type: 'complete'; content: string; conversation_id: string }
@@ -312,8 +312,8 @@ class ApiService {
             const parsed = JSON.parse(line);
             
             if (parsed.type === 'stage') {
-              // Stage update - notify callback
-              onStage?.(parsed.stage, parsed.message);
+              // Stage update - notify callback with live data
+              onStage?.(parsed.stage, parsed.message, parsed.data);
             } else if (parsed.type === 'interrupt') {
               // Interrupt - return result
               if (parsed.questions) {

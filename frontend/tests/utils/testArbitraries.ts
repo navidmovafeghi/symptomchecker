@@ -3,7 +3,8 @@
  * These arbitraries generate valid test data for IndexedDB storage tests.
  */
 import fc from 'fast-check';
-import { StoredConversation, StoredMessage } from '../../services/storage/types';
+import { StoredConversation, StoredMessage, StoredGraphState } from '../../services/storage/types';
+import { GraphNodeId } from '../../types/graph';
 
 /**
  * Arbitrary for generating valid timestamps within a reasonable range.
@@ -111,4 +112,67 @@ export const interruptDataArb = fc.record({
 export const resumeDataArb = fc.record({
   threadId: fc.uuid(),
   userInput: fc.string({ minLength: 1, maxLength: 500 }),
+});
+
+/**
+ * Arbitrary for valid GraphNodeId.
+ */
+export const graphNodeIdArb: fc.Arbitrary<GraphNodeId> = fc.constantFrom(
+  'generate_questions',
+  'collect_answers',
+  'generate_ddx',
+  'generate_refinement_question',
+  'collect_refinement_answer',
+  'refine_ddx',
+  'generate_final_summary'
+);
+
+/**
+ * Arbitrary for stage live data.
+ */
+export const stageLiveDataArb = fc.record({
+  question_count: fc.option(fc.nat({ max: 10 }), { nil: undefined }),
+  diagnosis_count: fc.option(fc.nat({ max: 10 }), { nil: undefined }),
+  top_diagnosis: fc.option(fc.string({ minLength: 1, maxLength: 50 }), { nil: undefined }),
+  top_probability: fc.option(fc.float({ min: 0, max: 1 }), { nil: undefined }),
+  refinement_round: fc.option(fc.integer({ min: 1, max: 5 }), { nil: undefined }),
+});
+
+/**
+ * Arbitrary for StoredGraphState.
+ * Requirements: 3.1, 3.2, 3.3
+ */
+export const storedGraphStateArb: fc.Arbitrary<StoredGraphState> = fc.record({
+  completed_stages: fc.array(graphNodeIdArb, { maxLength: 7 }).map(stages => [...new Set(stages)]),
+  waiting_node_id: fc.option(graphNodeIdArb, { nil: null }),
+  stages_live_data: fc.dictionary(
+    graphNodeIdArb,
+    stageLiveDataArb.map(data => {
+      // Convert to Record<string, unknown> by filtering out undefined values
+      const result: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(data)) {
+        if (value !== undefined) {
+          result[key] = value;
+        }
+      }
+      return result;
+    })
+  ),
+});
+
+/**
+ * Arbitrary for generating valid stored conversations with graph state.
+ */
+export const storedConversationWithGraphStateArb: fc.Arbitrary<StoredConversation> = fc.record({
+  id: fc.uuid(),
+  title: fc.option(fc.string({ minLength: 1, maxLength: 100 }), { nil: null }),
+  messages: fc.array(storedMessageArb, { minLength: 0, maxLength: 10 }),
+  created_at: isoTimestampArb,
+  updated_at: isoTimestampArb,
+  version: fc.constant(1),
+  thread_id: fc.uuid(),
+  is_interrupted: fc.boolean(),
+  pending_question: fc.option(fc.string({ minLength: 1, maxLength: 200 }), { nil: undefined }),
+  pending_options: fc.option(fc.array(fc.string({ minLength: 1, maxLength: 50 }), { minLength: 1, maxLength: 5 }), { nil: undefined }),
+  graph_state: fc.option(storedGraphStateArb, { nil: undefined }),
 });

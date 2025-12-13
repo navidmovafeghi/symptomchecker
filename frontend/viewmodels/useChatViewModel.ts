@@ -19,6 +19,13 @@ import {
   StoredMessage,
   StoredQuestionWithOptions,
 } from '@/services/storage';
+import {
+  GraphState,
+  INITIAL_GRAPH_STATE,
+  graphStateService,
+} from '@/services/graphStateService';
+import { getPersistenceService, SaveRequest } from '@/services/persistence';
+import { GraphNodeId } from '@/types/graph';
 
 interface ChatState {
   // State
@@ -32,6 +39,13 @@ interface ChatState {
   // Stage indicator state (for showing progress during LLM processing)
   currentStage: string | null;
   currentStageMessage: string | null;
+  currentStageData: Record<string, unknown> | null;
+  /** Live data accumulated for each completed stage */
+  stagesLiveData: Record<string, Record<string, unknown>>;
+
+  // Graph visualization state (single source of truth)
+  // Requirements: 1.1, 1.2
+  graphState: GraphState;
 
   // Conversation list state
   conversations: ConversationSummary[];
@@ -45,11 +59,13 @@ interface ChatState {
   pendingQuestions: QuestionWithOptions[];
   threadId: string | null;
 
-  // Storage state (NEW - Requirements: 1.4)
+  // Storage state (NEW - Requirements: 1.4, 5.4)
   storageError: string | null;
   isStorageAvailable: boolean;
   checkpointExpired: boolean;
   checkpointExpiredMessage: string | null;
+  /** Whether any conversation has pending saves - Requirements: 5.4 */
+  hasPendingSaves: boolean;
 
   // Actions
   sendMessage: (content: string, useStreaming?: boolean, locale?: string, questionsHeader?: string) => Promise<void>;
@@ -70,6 +86,10 @@ interface ChatState {
   initializeStorage: () => Promise<void>;
   clearStorageError: () => void;
   clearCheckpointExpired: () => void;
+  
+  // Graph state actions (Requirements: 1.1, 1.2, 1.3)
+  /** Update graph state atomically */
+  updateGraphState: (updates: Partial<GraphState>) => void;
 }
 
 /**
@@ -187,6 +207,12 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
   // Stage indicator state
   currentStage: null,
   currentStageMessage: null,
+  currentStageData: null,
+  stagesLiveData: {},
+
+  // Graph visualization state (single source of truth)
+  // Requirements: 1.1, 1.2
+  graphState: INITIAL_GRAPH_STATE,
 
   // Conversation list state
   conversations: [],
@@ -205,6 +231,7 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
   isStorageAvailable: false,
   checkpointExpired: false,
   checkpointExpiredMessage: null,
+  hasPendingSaves: false,
 
   // Send message action
   // Requirements: 1.1, 1.3, 3.2, 3.4 (Persian localization)
@@ -232,35 +259,46 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
     const messagesWithUser = [...messages, userMessage];
     set({ messages: messagesWithUser });
 
-    // Helper to save conversation to IndexedDB (fire-and-forget, never blocks chat)
-    const saveToStorage = (
+    // Helper to save conversation using PersistenceService
+    // Requirements: 1.4, 4.1, 6.1 - Centralized persistence with graph state
+    const saveConversation = async (
       convId: string,
       msgs: Message[],
       tId: string | null,
       isInterrupted: boolean,
       pendingQ: string | null,
       pendingOpts: string[],
-      pendingQs: QuestionWithOptions[] = []
-    ): void => {
+      pendingQs: QuestionWithOptions[] = [],
+      currentGraphState: GraphState
+    ): Promise<void> => {
       if (!isStorageAvailable) return;
       
-      // Fire and forget - don't await, don't block
-      safeStorageOperation(async () => {
+      try {
         const storageService = getStorageService();
-        // Try to get existing conversation to preserve created_at
         const existing = await storageService.getConversation(convId);
-        const storedConv = buildStoredConversation(
-          convId,
-          msgs,
-          tId,
+        
+        const saveRequest: SaveRequest = {
+          conversationId: convId,
+          messages: msgs,
+          threadId: tId,
           isInterrupted,
-          pendingQ,
-          pendingOpts,
-          pendingQs,
-          existing?.created_at
-        );
-        await storageService.saveConversation(storedConv);
-      }, (error) => set({ storageError: error }));
+          pendingQuestion: pendingQ,
+          pendingOptions: pendingOpts,
+          pendingQuestions: pendingQs,
+          graphState: {
+            completedStages: currentGraphState.completedStages,
+            waitingNodeId: currentGraphState.waitingNodeId,
+            stagesLiveData: currentGraphState.stagesLiveData as Record<string, Record<string, unknown>>,
+          },
+          existingCreatedAt: existing?.created_at,
+        };
+        
+        await getPersistenceService().saveConversation(saveRequest);
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Storage operation failed';
+        console.error('Storage operation failed:', errorMessage);
+        set({ storageError: errorMessage });
+      }
     };
 
     try {
@@ -302,9 +340,29 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
             };
             set({ messages: updatedMessages });
           },
-          // Stage callback - update the stage indicator
-          (stage, message) => {
-            set({ currentStage: stage, currentStageMessage: message });
+          // Stage callback - update the stage indicator with live data
+          // Requirements: 1.3, 5.1 - Use GraphStateService for atomic updates
+          (stage, message, data) => {
+            const currentGraphState = get().graphState;
+            const newGraphState = graphStateService.processStageEvent(
+              currentGraphState,
+              stage as any,
+              data
+            );
+            
+            // Update both legacy state and new graphState atomically
+            const currentLiveData = get().stagesLiveData;
+            const existingStageData = currentLiveData[stage] || {};
+            const updatedLiveData = data 
+              ? { ...currentLiveData, [stage]: { ...existingStageData, ...data } }
+              : currentLiveData;
+            set({ 
+              currentStage: stage, 
+              currentStageMessage: message, 
+              currentStageData: data || null,
+              stagesLiveData: updatedLiveData,
+              graphState: newGraphState,
+            });
           },
           // Pass locale for Persian language support (Requirements: 3.4)
           locale
@@ -319,6 +377,15 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
             : currentMessages;
 
           const finalConvId = result.conversationId || conversationId || `conv-${Date.now()}`;
+
+          // Process interrupt event using GraphStateService
+          // Requirements: 1.4, 4.1, 4.2, 5.2
+          const currentGraphState = get().graphState;
+          const interruptForGraphState = {
+            ...result,
+            thread_id: result.threadId,
+          };
+          const newGraphState = graphStateService.processInterruptEvent(currentGraphState, interruptForGraphState);
 
           // Handle multi-question format (preliminary questions)
           if (result.questions && result.questions.length > 0) {
@@ -338,6 +405,19 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
 
             const finalMessages = [...messagesWithoutPlaceholder, questionMessage];
 
+            // Save to IndexedDB with interrupt state BEFORE setting isWaitingForInput
+            // Requirements: 6.1 - Await save completion for interrupt state
+            await saveConversation(
+              finalConvId,
+              finalMessages,
+              result.threadId,
+              true,
+              null,
+              [],
+              result.questions,
+              newGraphState
+            );
+
             set({
               messages: finalMessages,
               isWaitingForInput: true,
@@ -348,18 +428,8 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
               conversationId: finalConvId,
               isStreaming: false,
               isLoading: false,
+              graphState: newGraphState,
             });
-
-            // Save to IndexedDB with interrupt state
-            saveToStorage(
-              finalConvId,
-              finalMessages,
-              result.threadId,
-              true,
-              null,
-              [],
-              result.questions
-            );
             return;
           }
 
@@ -375,6 +445,19 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
 
           const finalMessages = [...messagesWithoutPlaceholder, questionMessage];
 
+          // Save to IndexedDB with interrupt state BEFORE setting isWaitingForInput
+          // Requirements: 6.1 - Await save completion for interrupt state
+          await saveConversation(
+            finalConvId,
+            finalMessages,
+            result.threadId,
+            true,
+            result.question || null,
+            result.options || [],
+            [],
+            newGraphState
+          );
+
           set({
             messages: finalMessages,
             isWaitingForInput: true,
@@ -385,18 +468,8 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
             conversationId: finalConvId,
             isStreaming: false,
             isLoading: false,
+            graphState: newGraphState,
           });
-
-          // Save to IndexedDB with interrupt state (Requirements: 1.3, 3.2)
-          saveToStorage(
-            finalConvId,
-            finalMessages,
-            result.threadId,
-            true,
-            result.question || null,
-            result.options || [],
-            []
-          );
           return;
         }
 
@@ -410,7 +483,9 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
 
         // Save to IndexedDB after AI response (Requirements: 1.1, 1.3, 3.2)
         const finalMessages = get().messages;
-        saveToStorage(finalConvId, finalMessages, finalConvId, false, null, [], []);
+        const currentGraphState = get().graphState;
+        // Fire and forget for non-interrupt saves - don't block the UI
+        saveConversation(finalConvId, finalMessages, finalConvId, false, null, [], [], currentGraphState);
       } else {
         // Non-streaming mode
         const response = await apiService.sendMessage({
@@ -428,14 +503,17 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
         });
 
         // Save to IndexedDB (Requirements: 1.1, 1.3, 3.2)
-        saveToStorage(
+        const currentGraphState = get().graphState;
+        // Fire and forget for non-interrupt saves - don't block the UI
+        saveConversation(
           response.conversation_id,
           updatedMessages,
           response.conversation_id,
           false,
           null,
           [],
-          []
+          [],
+          currentGraphState
         );
       }
     } catch (err) {
@@ -479,34 +557,46 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
     const messagesWithUser = [...updatedMessages, userMessage];
     set({ messages: messagesWithUser });
 
-    // Helper to save conversation to IndexedDB (fire-and-forget, never blocks chat)
-    const saveToStorage = (
+    // Helper to save conversation using PersistenceService
+    // Requirements: 1.4, 4.1, 6.1 - Centralized persistence with graph state
+    const saveConversation = async (
       convId: string,
       msgs: Message[],
       tId: string | null,
       isInterrupted: boolean,
       pendingQ: string | null,
       pendingOpts: string[],
-      pendingQs: QuestionWithOptions[] = []
-    ): void => {
+      pendingQs: QuestionWithOptions[] = [],
+      currentGraphState: GraphState
+    ): Promise<void> => {
       if (!isStorageAvailable || !convId) return;
       
-      // Fire and forget - don't await, don't block
-      safeStorageOperation(async () => {
+      try {
         const storageService = getStorageService();
         const existing = await storageService.getConversation(convId);
-        const storedConv = buildStoredConversation(
-          convId,
-          msgs,
-          tId,
+        
+        const saveRequest: SaveRequest = {
+          conversationId: convId,
+          messages: msgs,
+          threadId: tId,
           isInterrupted,
-          pendingQ,
-          pendingOpts,
-          pendingQs,
-          existing?.created_at
-        );
-        await storageService.saveConversation(storedConv);
-      }, (error) => set({ storageError: error }));
+          pendingQuestion: pendingQ,
+          pendingOptions: pendingOpts,
+          pendingQuestions: pendingQs,
+          graphState: {
+            completedStages: currentGraphState.completedStages,
+            waitingNodeId: currentGraphState.waitingNodeId,
+            stagesLiveData: currentGraphState.stagesLiveData as Record<string, Record<string, unknown>>,
+          },
+          existingCreatedAt: existing?.created_at,
+        };
+        
+        await getPersistenceService().saveConversation(saveRequest);
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Storage operation failed';
+        console.error('Storage operation failed:', errorMessage);
+        set({ storageError: errorMessage });
+      }
     };
 
     try {
@@ -514,9 +604,28 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
       const result = await apiService.resumeConversationStream(
         threadId,
         option,
-        // Stage callback - update the stage indicator
-        (stage, message) => {
-          set({ currentStage: stage, currentStageMessage: message });
+        // Stage callback - update the stage indicator with live data
+        // Requirements: 1.3, 5.1 - Use GraphStateService for atomic updates
+        (stage, message, data) => {
+          const currentGraphState = get().graphState;
+          const newGraphState = graphStateService.processStageEvent(
+            currentGraphState,
+            stage as any,
+            data
+          );
+          
+          const currentLiveData = get().stagesLiveData;
+          const existingStageData = currentLiveData[stage] || {};
+          const updatedLiveData = data 
+            ? { ...currentLiveData, [stage]: { ...existingStageData, ...data } }
+            : currentLiveData;
+          set({ 
+            currentStage: stage, 
+            currentStageMessage: message, 
+            currentStageData: data || null,
+            stagesLiveData: updatedLiveData,
+            graphState: newGraphState,
+          });
         },
         // Pass locale for Persian language support (Requirements: 3.4)
         locale
@@ -524,6 +633,15 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
 
       if (result.type === 'interrupt') {
         const convId = conversationId || result.conversation_id;
+
+        // Process interrupt event using GraphStateService (selectOption)
+        // Requirements: 1.4, 4.1, 4.2, 5.2
+        const selectOptionCurrentGraphState = get().graphState;
+        const selectOptionInterruptForGraphState = {
+          ...result,
+          thread_id: threadId,
+        };
+        const selectOptionInterruptGraphState = graphStateService.processInterruptEvent(selectOptionCurrentGraphState, selectOptionInterruptForGraphState);
 
         // Handle multi-question format
         if (result.questions && result.questions.length > 0) {
@@ -541,6 +659,10 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
           };
           const finalMessages = [...get().messages, questionMessage];
           
+          // Save to IndexedDB with interrupt state BEFORE setting isWaitingForInput
+          // Requirements: 6.1 - Await save completion for interrupt state
+          await saveConversation(convId, finalMessages, threadId, true, null, [], result.questions, selectOptionInterruptGraphState);
+
           set({
             messages: finalMessages,
             isWaitingForInput: true,
@@ -550,9 +672,8 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
             isLoading: false,
             currentStage: null,
             currentStageMessage: null,
+            graphState: selectOptionInterruptGraphState,
           });
-
-          saveToStorage(convId, finalMessages, threadId, true, null, [], result.questions);
           return;
         }
 
@@ -567,6 +688,19 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
         };
         const finalMessages = [...get().messages, questionMessage];
         
+        // Save interrupt state to IndexedDB BEFORE setting isWaitingForInput
+        // Requirements: 6.1 - Await save completion for interrupt state
+        await saveConversation(
+          convId,
+          finalMessages,
+          threadId,
+          true,
+          result.question || null,
+          result.options || [],
+          [],
+          selectOptionInterruptGraphState
+        );
+
         set({
           messages: finalMessages,
           isWaitingForInput: true,
@@ -576,20 +710,14 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
           isLoading: false,
           currentStage: null,
           currentStageMessage: null,
+          graphState: selectOptionInterruptGraphState,
         });
-
-        // Save interrupt state to IndexedDB (Requirements: 3.3, 4.1)
-        saveToStorage(
-          convId,
-          finalMessages,
-          threadId,
-          true,
-          result.question || null,
-          result.options || [],
-          []
-        );
       } else {
-        // Complete - add final response
+        // Complete - add final response (selectOption)
+        // Process complete event using GraphStateService
+        // Requirements: 5.3
+        const selectOptionCompleteGraphState = graphStateService.processCompleteEvent(get().graphState);
+
         const assistantMessage: Message = {
           id: `assistant-${Date.now()}`,
           role: 'assistant',
@@ -608,17 +736,23 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
           pendingQuestions: [],
           currentStage: null,
           currentStageMessage: null,
+          graphState: selectOptionCompleteGraphState,
         });
 
         // Save to IndexedDB (Requirements: 3.3)
-        saveToStorage(convId, finalMessages, convId, false, null, [], []);
+        // Fire and forget for non-interrupt saves - don't block the UI
+        saveConversation(convId, finalMessages, convId, false, null, [], [], selectOptionCompleteGraphState);
         
         // Refresh conversation list
         get().loadConversations();
       }
     } catch (err) {
       if (err instanceof CheckpointExpiredError) {
-        // Checkpoint expired - clear interrupt state but keep messages
+        // Checkpoint expired - clear interrupt state but keep messages (selectOption)
+        // Requirements: 6.4 - Save conversation with cleared interrupt state
+        const currentGraphState = get().graphState;
+        const currentMessages = get().messages;
+        
         set({
           checkpointExpired: true,
           checkpointExpiredMessage: err.message,
@@ -630,18 +764,19 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
           currentStage: null,
           currentStageMessage: null,
         });
-        // Update IndexedDB to clear interrupt state
-        if (isStorageAvailable && conversationId) {
-          const storageService = getStorageService();
-          const existing = await storageService.getConversation(conversationId);
-          if (existing) {
-            await storageService.saveConversation({
-              ...existing,
-              is_interrupted: false,
-              pending_question: undefined,
-              pending_options: undefined,
-            });
-          }
+        
+        // Save cleared interrupt state using PersistenceService
+        if (conversationId) {
+          saveConversation(
+            conversationId,
+            currentMessages,
+            null, // Clear threadId
+            false, // is_interrupted = false
+            null, // Clear pending_question
+            [], // Clear pending_options
+            [], // Clear pending_questions
+            currentGraphState
+          );
         }
       } else {
         const errorMessage = err instanceof Error ? err.message : 'Failed to resume conversation';
@@ -678,34 +813,46 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
     const messagesWithUser = [...updatedMessages, userMessage];
     set({ messages: messagesWithUser });
 
-    // Helper to save conversation to IndexedDB (fire-and-forget, never blocks chat)
-    const saveToStorage = (
+    // Helper to save conversation using PersistenceService
+    // Requirements: 1.4, 4.1, 6.1 - Centralized persistence with graph state
+    const saveConversation = async (
       convId: string,
       msgs: Message[],
       tId: string | null,
       isInterrupted: boolean,
       pendingQ: string | null,
       pendingOpts: string[],
-      pendingQs: QuestionWithOptions[] = []
-    ): void => {
+      pendingQs: QuestionWithOptions[] = [],
+      currentGraphState: GraphState
+    ): Promise<void> => {
       if (!isStorageAvailable || !convId) return;
       
-      // Fire and forget - don't await, don't block
-      safeStorageOperation(async () => {
+      try {
         const storageService = getStorageService();
         const existing = await storageService.getConversation(convId);
-        const storedConv = buildStoredConversation(
-          convId,
-          msgs,
-          tId,
+        
+        const saveRequest: SaveRequest = {
+          conversationId: convId,
+          messages: msgs,
+          threadId: tId,
           isInterrupted,
-          pendingQ,
-          pendingOpts,
-          pendingQs,
-          existing?.created_at
-        );
-        await storageService.saveConversation(storedConv);
-      }, (error) => set({ storageError: error }));
+          pendingQuestion: pendingQ,
+          pendingOptions: pendingOpts,
+          pendingQuestions: pendingQs,
+          graphState: {
+            completedStages: currentGraphState.completedStages,
+            waitingNodeId: currentGraphState.waitingNodeId,
+            stagesLiveData: currentGraphState.stagesLiveData as Record<string, Record<string, unknown>>,
+          },
+          existingCreatedAt: existing?.created_at,
+        };
+        
+        await getPersistenceService().saveConversation(saveRequest);
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Storage operation failed';
+        console.error('Storage operation failed:', errorMessage);
+        set({ storageError: errorMessage });
+      }
     };
 
     try {
@@ -713,9 +860,28 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
       const result = await apiService.resumeConversationStream(
         threadId,
         userInput,
-        // Stage callback - update the stage indicator
-        (stage, message) => {
-          set({ currentStage: stage, currentStageMessage: message });
+        // Stage callback - update the stage indicator with live data
+        // Requirements: 1.3, 5.1 - Use GraphStateService for atomic updates
+        (stage, message, data) => {
+          const currentGraphState = get().graphState;
+          const newGraphState = graphStateService.processStageEvent(
+            currentGraphState,
+            stage as any,
+            data
+          );
+          
+          const currentLiveData = get().stagesLiveData;
+          const existingStageData = currentLiveData[stage] || {};
+          const updatedLiveData = data 
+            ? { ...currentLiveData, [stage]: { ...existingStageData, ...data } }
+            : currentLiveData;
+          set({ 
+            currentStage: stage, 
+            currentStageMessage: message, 
+            currentStageData: data || null,
+            stagesLiveData: updatedLiveData,
+            graphState: newGraphState,
+          });
         },
         // Pass locale for Persian language support (Requirements: 3.4)
         locale
@@ -723,6 +889,15 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
 
       if (result.type === 'interrupt') {
         const convId = conversationId || result.conversation_id;
+
+        // Process interrupt event using GraphStateService (resumeConversation)
+        // Requirements: 1.4, 4.1, 4.2, 5.2
+        const resumeCurrentGraphState = get().graphState;
+        const resumeInterruptForGraphState = {
+          ...result,
+          thread_id: threadId,
+        };
+        const resumeInterruptGraphState = graphStateService.processInterruptEvent(resumeCurrentGraphState, resumeInterruptForGraphState);
 
         // Handle multi-question format
         if (result.questions && result.questions.length > 0) {
@@ -740,6 +915,10 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
           };
           const finalMessages = [...get().messages, questionMessage];
           
+          // Save to IndexedDB with interrupt state BEFORE setting isWaitingForInput
+          // Requirements: 6.1 - Await save completion for interrupt state
+          await saveConversation(convId, finalMessages, threadId, true, null, [], result.questions, resumeInterruptGraphState);
+
           set({
             messages: finalMessages,
             isWaitingForInput: true,
@@ -749,9 +928,8 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
             isLoading: false,
             currentStage: null,
             currentStageMessage: null,
+            graphState: resumeInterruptGraphState,
           });
-
-          saveToStorage(convId, finalMessages, threadId, true, null, [], result.questions);
           return;
         }
 
@@ -766,6 +944,19 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
         };
         const finalMessages = [...get().messages, questionMessage];
         
+        // Save interrupt state to IndexedDB BEFORE setting isWaitingForInput
+        // Requirements: 6.1 - Await save completion for interrupt state
+        await saveConversation(
+          convId,
+          finalMessages,
+          threadId,
+          true,
+          result.question || null,
+          result.options || [],
+          [],
+          resumeInterruptGraphState
+        );
+
         set({
           messages: finalMessages,
           isWaitingForInput: true,
@@ -775,20 +966,14 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
           isLoading: false,
           currentStage: null,
           currentStageMessage: null,
+          graphState: resumeInterruptGraphState,
         });
-
-        // Save interrupt state to IndexedDB (Requirements: 3.3, 4.1)
-        saveToStorage(
-          convId,
-          finalMessages,
-          threadId,
-          true,
-          result.question || null,
-          result.options || [],
-          []
-        );
       } else {
-        // Complete - add final response
+        // Complete - add final response (resumeConversation)
+        // Process complete event using GraphStateService
+        // Requirements: 5.3
+        const resumeCompleteGraphState = graphStateService.processCompleteEvent(get().graphState);
+
         const assistantMessage: Message = {
           id: `assistant-${Date.now()}`,
           role: 'assistant',
@@ -807,17 +992,23 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
           pendingQuestions: [],
           currentStage: null,
           currentStageMessage: null,
+          graphState: resumeCompleteGraphState,
         });
 
         // Save to IndexedDB (Requirements: 3.3)
-        saveToStorage(convId, finalMessages, convId, false, null, [], []);
+        // Fire and forget for non-interrupt saves - don't block the UI
+        saveConversation(convId, finalMessages, convId, false, null, [], [], resumeCompleteGraphState);
         
         // Refresh conversation list
         get().loadConversations();
       }
     } catch (err) {
       if (err instanceof CheckpointExpiredError) {
-        // Checkpoint expired - clear interrupt state but keep messages
+        // Checkpoint expired - clear interrupt state but keep messages (resumeConversation)
+        // Requirements: 6.4 - Save conversation with cleared interrupt state
+        const currentGraphState = get().graphState;
+        const currentMessages = get().messages;
+        
         set({
           checkpointExpired: true,
           checkpointExpiredMessage: err.message,
@@ -830,19 +1021,19 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
           currentStage: null,
           currentStageMessage: null,
         });
-        // Update IndexedDB to clear interrupt state
-        if (isStorageAvailable && conversationId) {
-          const storageService = getStorageService();
-          const existing = await storageService.getConversation(conversationId);
-          if (existing) {
-            await storageService.saveConversation({
-              ...existing,
-              is_interrupted: false,
-              pending_question: undefined,
-              pending_options: undefined,
-              pending_questions: undefined,
-            });
-          }
+        
+        // Save cleared interrupt state using PersistenceService
+        if (conversationId) {
+          saveConversation(
+            conversationId,
+            currentMessages,
+            null, // Clear threadId
+            false, // is_interrupted = false
+            null, // Clear pending_question
+            [], // Clear pending_options
+            [], // Clear pending_questions
+            currentGraphState
+          );
         }
       } else {
         const errorMessage = err instanceof Error ? err.message : 'Failed to resume conversation';
@@ -883,34 +1074,46 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
     const messagesWithUser = [...updatedMessages, userMessage];
     set({ messages: messagesWithUser });
 
-    // Helper to save conversation to IndexedDB (fire-and-forget, never blocks chat)
-    const saveToStorage = (
+    // Helper to save conversation using PersistenceService
+    // Requirements: 1.4, 4.1, 6.1 - Centralized persistence with graph state
+    const saveConversation = async (
       convId: string,
       msgs: Message[],
       tId: string | null,
       isInterrupted: boolean,
       pendingQ: string | null,
       pendingOpts: string[],
-      pendingQs: QuestionWithOptions[] = []
-    ): void => {
+      pendingQs: QuestionWithOptions[] = [],
+      currentGraphState: GraphState
+    ): Promise<void> => {
       if (!isStorageAvailable || !convId) return;
       
-      // Fire and forget - don't await, don't block
-      safeStorageOperation(async () => {
+      try {
         const storageService = getStorageService();
         const existing = await storageService.getConversation(convId);
-        const storedConv = buildStoredConversation(
-          convId,
-          msgs,
-          tId,
+        
+        const saveRequest: SaveRequest = {
+          conversationId: convId,
+          messages: msgs,
+          threadId: tId,
           isInterrupted,
-          pendingQ,
-          pendingOpts,
-          pendingQs,
-          existing?.created_at
-        );
-        await storageService.saveConversation(storedConv);
-      }, (error) => set({ storageError: error }));
+          pendingQuestion: pendingQ,
+          pendingOptions: pendingOpts,
+          pendingQuestions: pendingQs,
+          graphState: {
+            completedStages: currentGraphState.completedStages,
+            waitingNodeId: currentGraphState.waitingNodeId,
+            stagesLiveData: currentGraphState.stagesLiveData as Record<string, Record<string, unknown>>,
+          },
+          existingCreatedAt: existing?.created_at,
+        };
+        
+        await getPersistenceService().saveConversation(saveRequest);
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Storage operation failed';
+        console.error('Storage operation failed:', errorMessage);
+        set({ storageError: errorMessage });
+      }
     };
 
     try {
@@ -918,9 +1121,28 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
       const result = await apiService.resumeConversationStream(
         threadId,
         answers,
-        // Stage callback - update the stage indicator
-        (stage, message) => {
-          set({ currentStage: stage, currentStageMessage: message });
+        // Stage callback - update the stage indicator with live data
+        // Requirements: 1.3, 5.1 - Use GraphStateService for atomic updates
+        (stage, message, data) => {
+          const currentGraphState = get().graphState;
+          const newGraphState = graphStateService.processStageEvent(
+            currentGraphState,
+            stage as any,
+            data
+          );
+          
+          const currentLiveData = get().stagesLiveData;
+          const existingStageData = currentLiveData[stage] || {};
+          const updatedLiveData = data 
+            ? { ...currentLiveData, [stage]: { ...existingStageData, ...data } }
+            : currentLiveData;
+          set({ 
+            currentStage: stage, 
+            currentStageMessage: message, 
+            currentStageData: data || null,
+            stagesLiveData: updatedLiveData,
+            graphState: newGraphState,
+          });
         },
         // Pass locale for Persian language support (Requirements: 3.4)
         locale
@@ -928,6 +1150,15 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
 
       if (result.type === 'interrupt') {
         const convId = conversationId || result.conversation_id;
+
+        // Process interrupt event using GraphStateService (submitMultipleAnswers)
+        // Requirements: 1.4, 4.1, 4.2, 5.2
+        const submitCurrentGraphState = get().graphState;
+        const submitInterruptForGraphState = {
+          ...result,
+          thread_id: threadId,
+        };
+        const submitInterruptGraphState = graphStateService.processInterruptEvent(submitCurrentGraphState, submitInterruptForGraphState);
 
         // Handle multi-question format
         if (result.questions && result.questions.length > 0) {
@@ -945,6 +1176,10 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
           };
           const finalMessages = [...get().messages, questionMessage];
           
+          // Save to IndexedDB with interrupt state BEFORE setting isWaitingForInput
+          // Requirements: 6.1 - Await save completion for interrupt state
+          await saveConversation(convId, finalMessages, threadId, true, null, [], result.questions, submitInterruptGraphState);
+
           set({
             messages: finalMessages,
             isWaitingForInput: true,
@@ -954,9 +1189,8 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
             isLoading: false,
             currentStage: null,
             currentStageMessage: null,
+            graphState: submitInterruptGraphState,
           });
-
-          saveToStorage(convId, finalMessages, threadId, true, null, [], result.questions);
           return;
         }
 
@@ -971,6 +1205,10 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
         };
         const finalMessages = [...get().messages, questionMessage];
         
+        // Save interrupt state to IndexedDB BEFORE setting isWaitingForInput
+        // Requirements: 6.1 - Await save completion for interrupt state
+        await saveConversation(convId, finalMessages, threadId, true, result.question || null, result.options || [], [], submitInterruptGraphState);
+
         set({
           messages: finalMessages,
           isWaitingForInput: true,
@@ -978,13 +1216,16 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
           pendingOptions: result.options || [],
           pendingQuestions: [],
           isLoading: false,
+          graphState: submitInterruptGraphState,
           currentStage: null,
           currentStageMessage: null,
         });
-
-        saveToStorage(convId, finalMessages, threadId, true, result.question || null, result.options || [], []);
       } else {
-        // Complete - add final response
+        // Complete - add final response (submitMultipleAnswers)
+        // Process complete event using GraphStateService
+        // Requirements: 5.3
+        const submitCompleteGraphState = graphStateService.processCompleteEvent(get().graphState);
+
         const assistantMessage: Message = {
           id: `assistant-${Date.now()}`,
           role: 'assistant',
@@ -1003,13 +1244,20 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
           pendingQuestions: [],
           currentStage: null,
           currentStageMessage: null,
+          graphState: submitCompleteGraphState,
         });
 
-        saveToStorage(convId, finalMessages, convId, false, null, [], []);
+        // Fire and forget for non-interrupt saves - don't block the UI
+        saveConversation(convId, finalMessages, convId, false, null, [], [], submitCompleteGraphState);
         get().loadConversations();
       }
     } catch (err) {
       if (err instanceof CheckpointExpiredError) {
+        // Checkpoint expired (submitMultipleAnswers)
+        // Requirements: 6.4 - Save conversation with cleared interrupt state
+        const currentGraphState = get().graphState;
+        const currentMessages = get().messages;
+        
         set({
           checkpointExpired: true,
           checkpointExpiredMessage: err.message,
@@ -1022,18 +1270,19 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
           threadId: null,
           isLoading: false,
         });
-        if (isStorageAvailable && conversationId) {
-          const storageService = getStorageService();
-          const existing = await storageService.getConversation(conversationId);
-          if (existing) {
-            await storageService.saveConversation({
-              ...existing,
-              is_interrupted: false,
-              pending_question: undefined,
-              pending_options: undefined,
-              pending_questions: undefined,
-            });
-          }
+        
+        // Save cleared interrupt state using PersistenceService
+        if (conversationId) {
+          saveConversation(
+            conversationId,
+            currentMessages,
+            null, // Clear threadId
+            false, // is_interrupted = false
+            null, // Clear pending_question
+            [], // Clear pending_options
+            [], // Clear pending_questions
+            currentGraphState
+          );
         }
       } else {
         const errorMessage = err instanceof Error ? err.message : 'Failed to submit answers';
@@ -1104,7 +1353,7 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
   },
 
   // Select and load a conversation from IndexedDB
-  // Requirements: 1.2, 4.1
+  // Requirements: 1.2, 3.4, 4.1, 4.4, 8.1, 8.2 - Restore graph state from storage or migrate
   selectConversation: async (conversationId: string) => {
     const { isStorageAvailable } = get();
     if (!isStorageAvailable) {
@@ -1125,6 +1374,39 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
       // Convert stored messages to Message type
       const messages = conversation.messages.map(storedMessageToMessage);
 
+      // Restore or migrate graph state
+      // Requirements: 4.2, 4.3, 4.4
+      let restoredGraphState: GraphState;
+      
+      if (conversation.graph_state) {
+        // Validate graph state from storage (Requirements: 4.4)
+        const storedGraphState = conversation.graph_state;
+        
+        // Validate completed_stages is an array
+        const completedStages = Array.isArray(storedGraphState.completed_stages)
+          ? storedGraphState.completed_stages as GraphNodeId[]
+          : [];
+        
+        // Validate waiting_node_id is a string or null
+        const waitingNodeId = (typeof storedGraphState.waiting_node_id === 'string' || storedGraphState.waiting_node_id === null)
+          ? storedGraphState.waiting_node_id as GraphNodeId | null
+          : null;
+        
+        // Restore graph state from storage (Requirements: 4.2)
+        restoredGraphState = {
+          currentStage: null,
+          completedStages,
+          waitingNodeId,
+          stagesLiveData: storedGraphState.stages_live_data as Partial<Record<GraphNodeId, Record<string, unknown>>> || {},
+        };
+      } else {
+        // Apply migration for legacy conversations without graph_state (Requirements: 4.3)
+        restoredGraphState = graphStateService.migrateConversationGraphState(
+          messages,
+          conversation.is_interrupted
+        );
+      }
+
       set({
         conversationId: conversation.id,
         messages,
@@ -1134,6 +1416,13 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
         pendingOptions: conversation.pending_options || [],
         pendingQuestions: conversation.pending_questions || [],
         threadId: conversation.thread_id,
+        // Restore graph state from storage or migration
+        graphState: restoredGraphState,
+        // Also update legacy stage-related state for backward compatibility
+        stagesLiveData: restoredGraphState.stagesLiveData as Record<string, Record<string, unknown>>,
+        currentStage: null,
+        currentStageMessage: null,
+        currentStageData: null,
       });
     } catch (err) {
       if (err instanceof StorageError) {
@@ -1146,6 +1435,7 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
   },
 
   // Start a new conversation
+  // Requirements: 3.1, 3.2, 3.5, 10.2 - Clear all accumulated live data and reset graph state
   newConversation: () => {
     set({
       messages: [],
@@ -1159,11 +1449,18 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
       threadId: null,
       checkpointExpired: false,
       checkpointExpiredMessage: null,
+      // Reset stage-related state for graph visualization
+      stagesLiveData: {},
+      currentStage: null,
+      currentStageMessage: null,
+      currentStageData: null,
+      // Reset graph state to initial values (Requirements: 3.5, 10.2)
+      graphState: graphStateService.resetState(),
     });
   },
 
   // Delete a conversation from IndexedDB and server checkpoint
-  // Requirements: 2.1, 2.2
+  // Requirements: 2.1, 2.2, 10.3
   deleteConversation: async (conversationId: string) => {
     const { isStorageAvailable } = get();
     
@@ -1182,12 +1479,19 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
         conversations: conversations.filter((c) => c.id !== conversationId),
       });
       
-      // If we deleted the current conversation, clear it
+      // If we deleted the current conversation, clear it and reset graph state
+      // Requirements: 10.3
       if (currentId === conversationId) {
         set({
           messages: [],
           conversationId: null,
           threadId: null,
+          // Reset graph state when deleting active conversation (Requirements: 10.3)
+          graphState: graphStateService.resetState(),
+          stagesLiveData: {},
+          currentStage: null,
+          currentStageMessage: null,
+          currentStageData: null,
         });
       }
     } catch (err) {
@@ -1226,6 +1530,28 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
     try {
       await initializeStorage();
       set({ isStorageAvailable: true, storageError: null });
+      
+      // Subscribe to PersistenceService events - Requirements: 5.4, 2.2, 2.4
+      const persistenceService = getPersistenceService();
+      
+      // Update hasPendingSaves state when queue changes
+      persistenceService.on('saveStarted', () => {
+        set({ hasPendingSaves: persistenceService.hasPendingSaves() });
+      });
+      
+      persistenceService.on('saveCompleted', () => {
+        set({ hasPendingSaves: persistenceService.hasPendingSaves() });
+      });
+      
+      // Handle save failures - Requirements: 2.2, 2.4
+      persistenceService.on('saveFailed', ({ error, errorCode }) => {
+        if (errorCode === 'QUOTA_EXCEEDED') {
+          set({ storageError: 'Storage full. Please delete old conversations.' });
+        } else {
+          set({ storageError: `Failed to save: ${error}` });
+        }
+        set({ hasPendingSaves: persistenceService.hasPendingSaves() });
+      });
       
       // Load conversations after initialization
       await get().loadConversations();
@@ -1275,5 +1601,17 @@ export const useChatViewModel = create<ChatState>((set, get) => ({
   // Clear checkpoint expired state
   clearCheckpointExpired: () => {
     set({ checkpointExpired: false, checkpointExpiredMessage: null });
+  },
+
+  // Update graph state atomically
+  // Requirements: 1.1, 1.2, 1.3
+  updateGraphState: (updates: Partial<GraphState>) => {
+    const currentGraphState = get().graphState;
+    set({
+      graphState: {
+        ...currentGraphState,
+        ...updates,
+      },
+    });
   },
 }));

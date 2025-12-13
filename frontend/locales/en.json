@@ -11,28 +11,28 @@
     "warning": "Warning"
   },
   "chat": {
-    "placeholder": "Type a message...",
+    "placeholder": "Describe your symptoms...",
     "placeholderQuestions": "Please answer the questions above...",
     "placeholderOptions": "Select an option or type...",
     "newChat": "New Chat",
     "chatHistory": "Chat History",
     "noConversations": "No conversations yet",
     "newConversation": "New conversation",
-    "howCanIHelp": "How can I help you today?",
-    "aiAssistantIntro": "I'm your AI assistant. Ask me anything or try one of these suggestions.",
+    "howCanIHelp": "What symptoms are you experiencing?",
+    "aiAssistantIntro": "I'm your AI symptom checker. Describe how you're feeling and I'll help you understand what might be going on.",
     "thinking": "Thinking",
     "submitAnswers": "Submit Answers",
     "pleaseAnswerQuestions": "Please answer the following questions:"
   },
   "suggestions": {
-    "explainConcept": "Explain a concept",
-    "explainConceptDesc": "Help me understand something",
-    "writeContent": "Write content",
-    "writeContentDesc": "Draft emails, messages, or documents",
-    "answerQuestions": "Answer questions",
-    "answerQuestionsDesc": "Get information on any topic",
-    "brainstormIdeas": "Brainstorm ideas",
-    "brainstormIdeasDesc": "Generate creative suggestions"
+    "headache": "I have a headache",
+    "headacheDesc": "Head pain, pressure, or discomfort",
+    "stomachPain": "My stomach hurts",
+    "stomachPainDesc": "Abdominal pain, nausea, or digestive issues",
+    "fever": "I have a fever",
+    "feverDesc": "High temperature, chills, or sweating",
+    "fatigue": "I feel very tired",
+    "fatigueDesc": "Exhaustion, weakness, or low energy"
   },
   "medical": {
     "diagnosis": "Diagnosis",
@@ -61,5 +61,55 @@
     "switchLanguage": "Switch Language",
     "english": "English",
     "persian": "فارسی"
+  },
+  "graph": {
+    "toggle": {
+      "show": "Behind the Scenes",
+      "hide": "Hide Details"
+    },
+    "status": {
+      "pending": "Waiting to start",
+      "active": "In progress",
+      "waiting": "Waiting for input",
+      "completed": "Completed",
+      "processing": "Processing..."
+    },
+    "nodes": {
+      "generateQuestions": {
+        "name": "Generate Questions",
+        "description": "Creating initial questions about your symptoms",
+        "tooltip": "The system analyzes your initial description and creates relevant questions to better understand your symptoms. This helps gather the information needed for an accurate assessment."
+      },
+      "collectAnswers": {
+        "name": "Collect Answers",
+        "description": "Gathering your responses",
+        "tooltip": "Your answers to the initial questions are being collected and organized. This information will be used to start building a picture of your health situation."
+      },
+      "generateDdx": {
+        "name": "Analyze Symptoms",
+        "description": "Evaluating possible conditions",
+        "tooltip": "Based on your symptoms and answers, the system is analyzing possible conditions that might explain what you're experiencing. This creates an initial list of considerations."
+      },
+      "refinementQuestion": {
+        "name": "Follow-up Question",
+        "description": "Asking for more details",
+        "tooltip": "To narrow down the possibilities, the system generates targeted follow-up questions. These help distinguish between similar conditions and improve accuracy."
+      },
+      "collectRefinementAnswer": {
+        "name": "Collect Response",
+        "description": "Receiving your follow-up answer",
+        "tooltip": "Your response to the follow-up question is being processed. This additional information helps refine the assessment."
+      },
+      "refineDdx": {
+        "name": "Refine Analysis",
+        "description": "Updating the assessment",
+        "tooltip": "Using your latest response, the system updates its analysis. This may lead to more follow-up questions or proceed to the final summary if enough information has been gathered."
+      },
+      "finalSummary": {
+        "name": "Final Summary",
+        "description": "Preparing your results",
+        "tooltip": "All information has been gathered and analyzed. The system is now preparing a comprehensive summary of findings and recommendations for you to review."
+      }
+    }
   }
 }
