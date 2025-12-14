@@ -114,18 +114,24 @@ class ExtractedAnswers(BaseModel):
 class RefinementQuestion(BaseModel):
     """A follow-up question to narrow down the differential diagnosis.
     
-    Generated based on current DDX to differentiate between top conditions.
+    Enhanced to include question utility assessment for the comparative
+    reasoning flow. When question_useful is False, the purpose field
+    explains what would help differentiate (e.g., tests, imaging).
     """
     question: str = Field(
         description="The refinement question text. Must be exactly one question targeting differentiation between top conditions."
     )
     purpose: str = Field(
-        description="Why this question helps narrow down the diagnosis."
+        description="Why this question helps narrow down the diagnosis, OR if question_useful is False, what would help (tests, imaging, etc.)."
     )
     options: list[str] = Field(
         description="2-4 contextually relevant answer options for the patient to choose from.",
         min_length=2,
         max_length=4
+    )
+    question_useful: bool = Field(
+        default=True,
+        description="Whether a history question can meaningfully differentiate between the top diagnoses. Set to False when tests/imaging are needed instead."
     )
 
 

@@ -420,44 +420,50 @@ def create_test_state(
     return state
 
 
-# **Feature: symptom-checker-provider, Property 8: Refinement stop condition - confidence**
-# *For any* state where life-threatening probabilities sum to less than 0.10 AND 
-# top diagnosis probability exceeds 0.50, the should_continue_refinement function 
-# SHALL return "end".
-# **Validates: Requirements 4.1**
+# NOTE: The old Property 8 test (life-threatening < 10% AND top > 50%) has been replaced
+# by the new enhanced-diagnostic-reasoning Property 1 test (probability gap > 15%).
+# The old test is kept for backward compatibility but now tests the probability gap condition.
+# See test_property_1_probability_gap_triggers_end for the new property test.
 
-# Strategy for life-threatening probability that sums to < 0.10
-life_threatening_prob_strategy = st.floats(min_value=0.0, max_value=0.09, allow_nan=False, allow_infinity=False)
-
-# Strategy for top diagnosis probability > 0.50
+# Strategy for top diagnosis probability > 0.50 (which creates gap > 15% with second < 0.35)
 high_confidence_prob_strategy = st.floats(min_value=0.51, max_value=1.0, allow_nan=False, allow_infinity=False)
+
+# Strategy for second diagnosis probability that creates gap > 15%
+low_second_prob_strategy = st.floats(min_value=0.0, max_value=0.35, allow_nan=False, allow_infinity=False)
 
 
 @settings(max_examples=100)
 @given(
     top_prob=high_confidence_prob_strategy,
-    lt_prob=life_threatening_prob_strategy,
+    second_prob=low_second_prob_strategy,
     refinement_count=st.integers(min_value=0, max_value=4),
 )
-def test_property_8_refinement_stop_confidence(top_prob: float, lt_prob: float, refinement_count: int):
-    """Property 8: Refinement stop condition - confidence.
+def test_property_8_refinement_stop_confidence(top_prob: float, second_prob: float, refinement_count: int):
+    """Property 8: Refinement stop condition - probability gap (updated).
     
-    For any state where life-threatening probabilities sum to less than 0.10 AND
-    top diagnosis probability exceeds 0.50, should_continue_refinement returns "end".
+    NOTE: This test was updated from the old routing logic (life-threatening < 10% AND top > 50%)
+    to the new routing logic (probability gap > 15%).
+    
+    For any state where the probability gap between top and second diagnosis exceeds 15%,
+    should_continue_refinement returns "end".
     """
-    # Create diagnoses where top is high confidence and life-threatening is low
+    # Ensure gap > 15%
+    if top_prob - second_prob <= 0.15:
+        return  # Skip this test case
+    
+    # Create diagnoses where gap > 15%
     diagnoses = [
         Diagnosis(
-            condition="Common Cold",
+            condition="Top Condition",
             probability=top_prob,
-            reasoning="Symptoms match",
+            reasoning="Most likely",
             severity="mild"
         ),
         Diagnosis(
-            condition="Serious Condition",
-            probability=lt_prob,
-            reasoning="Low probability",
-            severity="life_threatening"
+            condition="Second Condition",
+            probability=second_prob,
+            reasoning="Less likely",
+            severity="moderate"
         ),
     ]
     
@@ -465,9 +471,9 @@ def test_property_8_refinement_stop_confidence(top_prob: float, lt_prob: float, 
     
     result = should_continue_refinement(state)
     
-    # Should return "end" because confidence conditions are met
+    # Should return "end" because probability gap > 15%
     assert result == "end", \
-        f"Expected 'end' when top_prob={top_prob} > 0.50 and lt_sum={lt_prob} < 0.10, got '{result}'"
+        f"Expected 'end' when gap={top_prob - second_prob:.2%} > 15%, got '{result}'"
 
 
 # **Feature: symptom-checker-provider, Property 9: Refinement stop condition - max iterations**
@@ -512,42 +518,13 @@ def test_property_9_refinement_stop_max_iterations(refinement_count: int, top_pr
         f"Expected 'end' when refinement_count={refinement_count} >= 5, got '{result}'"
 
 
-# Additional test: should continue when conditions are NOT met
-@settings(max_examples=100)
-@given(
-    top_prob=st.floats(min_value=0.0, max_value=0.50, allow_nan=False, allow_infinity=False),
-    lt_prob=st.floats(min_value=0.10, max_value=1.0, allow_nan=False, allow_infinity=False),
-    refinement_count=st.integers(min_value=0, max_value=4),
-)
-def test_refinement_continues_when_conditions_not_met(top_prob: float, lt_prob: float, refinement_count: int):
-    """Refinement should continue when stop conditions are NOT met.
-    
-    When top_prob <= 0.50 OR lt_sum >= 0.10, and refinement_count < 5,
-    should_continue_refinement should return "continue".
-    """
-    # Create diagnoses where conditions for stopping are NOT met
-    diagnoses = [
-        Diagnosis(
-            condition="Uncertain Condition",
-            probability=top_prob,
-            reasoning="Uncertain",
-            severity="moderate"
-        ),
-        Diagnosis(
-            condition="Life Threatening",
-            probability=lt_prob,
-            reasoning="Possible",
-            severity="life_threatening"
-        ),
-    ]
-    
-    state = create_test_state(refinement_count=refinement_count, diagnoses=diagnoses)
-    
-    result = should_continue_refinement(state)
-    
-    # Should return "continue" because stop conditions are not met
-    assert result == "continue", \
-        f"Expected 'continue' when top_prob={top_prob} <= 0.50 or lt_sum={lt_prob} >= 0.10, got '{result}'"
+# NOTE: The old test_refinement_continues_when_conditions_not_met was removed because
+# the routing logic has been updated per the enhanced-diagnostic-reasoning spec.
+# The new routing logic uses:
+# - Probability gap > 15% (instead of life-threatening sum < 10% AND top > 50%)
+# - question_useful flag
+# - Max iterations (unchanged)
+# See test_property_4_continue_when_no_stop_conditions for the new "continue" test.
 
 
 
@@ -851,3 +828,435 @@ def test_state_data_integrity_helper(qa_pairs: list[dict], diagnoses: list[Diagn
     state = create_state_with_qa_and_ddx(qa_pairs, diagnoses)
     assert verify_state_data_integrity(state), \
         "Valid state should pass integrity check"
+
+
+# ============== PROPERTY TESTS FOR REFINEMENT QUESTION UTILITY ==============
+
+# Strategy for RefinementQuestion with question_useful=True
+refinement_question_useful_strategy = st.builds(
+    RefinementQuestion,
+    question=non_empty_str,
+    purpose=non_empty_str,
+    options=options_strategy,
+    question_useful=st.just(True),
+)
+
+# Strategy for RefinementQuestion with question_useful=False
+refinement_question_not_useful_strategy = st.builds(
+    RefinementQuestion,
+    question=non_empty_str,
+    purpose=non_empty_str,
+    options=options_strategy,
+    question_useful=st.just(False),
+)
+
+
+# **Feature: enhanced-diagnostic-reasoning, Property 6: All fields populated when question is useful**
+# *For any* RefinementQuestion where question_useful is True, the question field 
+# should be non-empty and options should have at least 2 items.
+# **Validates: Requirements 3.5, 8.4**
+
+@settings(max_examples=100)
+@given(refinement_question_useful_strategy)
+def test_property_6_all_fields_populated_when_question_useful(question: RefinementQuestion):
+    """Property 6: All fields populated when question is useful.
+    
+    For any RefinementQuestion where question_useful is True, the question field
+    should be non-empty and options should have at least 2 items.
+    """
+    # Verify question_useful is True
+    assert question.question_useful is True, "question_useful must be True for this test"
+    
+    # Question field is non-empty
+    assert question.question.strip(), "Question text must be non-empty when question_useful is True"
+    
+    # Purpose field is non-empty
+    assert question.purpose.strip(), "Purpose must be non-empty when question_useful is True"
+    
+    # Options has at least 2 items
+    assert len(question.options) >= 2, "Options must have at least 2 items when question_useful is True"
+    
+    # Each option is non-empty
+    for opt in question.options:
+        assert opt.strip(), "Each option must be non-empty when question_useful is True"
+
+
+# **Feature: enhanced-diagnostic-reasoning, Property 5: Purpose field populated when question not useful**
+# *For any* RefinementQuestion where question_useful is False, the purpose field 
+# should be non-empty (explaining what would help differentiate).
+# **Validates: Requirements 3.4, 8.3**
+
+@settings(max_examples=100)
+@given(refinement_question_not_useful_strategy)
+def test_property_5_purpose_field_populated_when_question_not_useful(question: RefinementQuestion):
+    """Property 5: Purpose field populated when question not useful.
+    
+    For any RefinementQuestion where question_useful is False, the purpose field
+    should be non-empty (explaining what would help differentiate, e.g., tests, imaging).
+    """
+    # Verify question_useful is False
+    assert question.question_useful is False, "question_useful must be False for this test"
+    
+    # Purpose field is non-empty (explains what would help)
+    assert question.purpose.strip(), \
+        "Purpose must be non-empty when question_useful is False (should explain what would help)"
+
+
+# ============== PROPERTY TESTS FOR ENHANCED ROUTING LOGIC ==============
+
+# Helper to create test state with current_refinement_question
+def create_test_state_with_question(
+    refinement_count: int = 0,
+    diagnoses: list[Diagnosis] | None = None,
+    use_refined: bool = False,
+    language: str = 'en',
+    current_refinement_question: RefinementQuestion | None = None,
+) -> SymptomCheckerState:
+    """Helper to create a test state with specified parameters including refinement question."""
+    ddx = None
+    if diagnoses:
+        ddx = DifferentialDiagnosis(
+            differential=diagnoses,
+            disclaimer="For educational purposes only."
+        )
+    
+    state: SymptomCheckerState = {
+        "messages": [],
+        "symptom_input": "test symptom",
+        "preliminary_questions": None,
+        "qa_pairs": None,
+        "differential_diagnosis": ddx if not use_refined else None,
+        "refinement_qa_pairs": None,
+        "current_refinement_question": current_refinement_question,
+        "refined_ddx": ddx if use_refined else None,
+        "refinement_count": refinement_count,
+        "final_summary": None,
+        "language": language,
+    }
+    return state
+
+
+# **Feature: enhanced-diagnostic-reasoning, Property 2: Question utility flag triggers routing to end**
+# *For any* graph state where current_refinement_question.question_useful is False,
+# the routing function should return "end"
+# **Validates: Requirements 3.3, 5.1**
+
+@settings(max_examples=100)
+@given(
+    refinement_count=st.integers(min_value=0, max_value=4),
+    top_prob=st.floats(min_value=0.3, max_value=0.5, allow_nan=False, allow_infinity=False),
+    second_prob=st.floats(min_value=0.2, max_value=0.45, allow_nan=False, allow_infinity=False),
+)
+def test_property_2_question_utility_flag_triggers_end(
+    refinement_count: int,
+    top_prob: float,
+    second_prob: float,
+):
+    """Property 2: Question utility flag triggers routing to end.
+    
+    For any graph state where current_refinement_question.question_useful is False,
+    the routing function should return "end".
+    """
+    # Ensure top_prob > second_prob but gap <= 15%
+    if top_prob <= second_prob:
+        top_prob, second_prob = second_prob, top_prob
+    if top_prob - second_prob > 0.15:
+        second_prob = top_prob - 0.10  # Ensure gap is within 15%
+    
+    # Create diagnoses where probability gap is NOT a stop condition
+    diagnoses = [
+        Diagnosis(
+            condition="Condition A",
+            probability=top_prob,
+            reasoning="Top condition",
+            severity="moderate"
+        ),
+        Diagnosis(
+            condition="Condition B",
+            probability=second_prob,
+            reasoning="Second condition",
+            severity="moderate"
+        ),
+    ]
+    
+    # Create a refinement question with question_useful=False
+    question_not_useful = RefinementQuestion(
+        question="Placeholder question",
+        purpose="Blood test needed to distinguish bacterial vs viral infection",
+        options=["Option 1", "Option 2"],
+        question_useful=False,
+    )
+    
+    state = create_test_state_with_question(
+        refinement_count=refinement_count,
+        diagnoses=diagnoses,
+        current_refinement_question=question_not_useful,
+    )
+    
+    result = should_continue_refinement(state)
+    
+    # Should return "end" because question_useful is False
+    assert result == "end", \
+        f"Expected 'end' when question_useful=False, got '{result}'"
+
+
+# **Feature: enhanced-diagnostic-reasoning, Property 1: Probability gap triggers routing to end**
+# *For any* graph state where the top diagnosis probability exceeds the second diagnosis
+# probability by more than 15 percentage points, the routing function should return "end"
+# **Validates: Requirements 2.2, 2.3, 5.2**
+
+@settings(max_examples=100)
+@given(
+    refinement_count=st.integers(min_value=0, max_value=4),
+    top_prob=st.floats(min_value=0.30, max_value=0.95, allow_nan=False, allow_infinity=False),
+    gap=st.floats(min_value=0.16, max_value=0.50, allow_nan=False, allow_infinity=False),
+)
+def test_property_1_probability_gap_triggers_end(
+    refinement_count: int,
+    top_prob: float,
+    gap: float,
+):
+    """Property 1: Probability gap triggers routing to end.
+    
+    For any graph state where the top diagnosis probability exceeds the second
+    diagnosis probability by more than 15 percentage points, the routing function
+    should return "end".
+    """
+    # Calculate second_prob ensuring gap > 15%
+    second_prob = max(0.0, top_prob - gap)
+    
+    # Ensure gap is actually > 15%
+    if top_prob - second_prob <= 0.15:
+        return  # Skip this test case if we can't create valid gap
+    
+    diagnoses = [
+        Diagnosis(
+            condition="Top Condition",
+            probability=top_prob,
+            reasoning="Most likely",
+            severity="moderate"
+        ),
+        Diagnosis(
+            condition="Second Condition",
+            probability=second_prob,
+            reasoning="Less likely",
+            severity="moderate"
+        ),
+    ]
+    
+    # Create a refinement question with question_useful=True (so this isn't the stop reason)
+    question_useful = RefinementQuestion(
+        question="Test question?",
+        purpose="To differentiate conditions",
+        options=["Option 1", "Option 2"],
+        question_useful=True,
+    )
+    
+    state = create_test_state_with_question(
+        refinement_count=refinement_count,
+        diagnoses=diagnoses,
+        current_refinement_question=question_useful,
+    )
+    
+    result = should_continue_refinement(state)
+    
+    # Should return "end" because probability gap > 15%
+    assert result == "end", \
+        f"Expected 'end' when probability gap ({top_prob - second_prob:.2%}) > 15%, got '{result}'"
+
+
+# **Feature: enhanced-diagnostic-reasoning, Property 3: Max iterations triggers routing to end**
+# *For any* graph state where refinement_count is greater than or equal to 5,
+# the routing function should return "end"
+# **Validates: Requirements 5.3**
+
+@settings(max_examples=100)
+@given(
+    refinement_count=st.integers(min_value=5, max_value=100),
+    top_prob=st.floats(min_value=0.2, max_value=0.4, allow_nan=False, allow_infinity=False),
+    second_prob=st.floats(min_value=0.15, max_value=0.35, allow_nan=False, allow_infinity=False),
+)
+def test_property_3_max_iterations_triggers_end(
+    refinement_count: int,
+    top_prob: float,
+    second_prob: float,
+):
+    """Property 3: Max iterations triggers routing to end.
+    
+    For any graph state where refinement_count >= 5, the routing function
+    should return "end" regardless of other conditions.
+    """
+    # Ensure top_prob > second_prob but gap <= 15% (so gap isn't the stop reason)
+    if top_prob <= second_prob:
+        top_prob, second_prob = second_prob, top_prob
+    if top_prob - second_prob > 0.15:
+        second_prob = top_prob - 0.10
+    
+    diagnoses = [
+        Diagnosis(
+            condition="Condition A",
+            probability=top_prob,
+            reasoning="Some reasoning",
+            severity="moderate"
+        ),
+        Diagnosis(
+            condition="Condition B",
+            probability=second_prob,
+            reasoning="Some reasoning",
+            severity="moderate"
+        ),
+    ]
+    
+    # Create a refinement question with question_useful=True (so this isn't the stop reason)
+    question_useful = RefinementQuestion(
+        question="Test question?",
+        purpose="To differentiate conditions",
+        options=["Option 1", "Option 2"],
+        question_useful=True,
+    )
+    
+    state = create_test_state_with_question(
+        refinement_count=refinement_count,
+        diagnoses=diagnoses,
+        current_refinement_question=question_useful,
+    )
+    
+    result = should_continue_refinement(state)
+    
+    # Should return "end" because refinement_count >= 5
+    assert result == "end", \
+        f"Expected 'end' when refinement_count={refinement_count} >= 5, got '{result}'"
+
+
+# **Feature: enhanced-diagnostic-reasoning, Property 4: Continue when no stop conditions met**
+# *For any* graph state where probability gap <= 15%, question_useful is True,
+# and refinement_count < 5, the routing function should return "continue"
+# **Validates: Requirements 5.4**
+
+@settings(max_examples=100)
+@given(
+    refinement_count=st.integers(min_value=0, max_value=4),
+    top_prob=st.floats(min_value=0.25, max_value=0.50, allow_nan=False, allow_infinity=False),
+    # Use max_value=0.14 to stay safely below the 15% threshold and avoid floating point boundary issues
+    gap=st.floats(min_value=0.0, max_value=0.14, allow_nan=False, allow_infinity=False),
+)
+def test_property_4_continue_when_no_stop_conditions(
+    refinement_count: int,
+    top_prob: float,
+    gap: float,
+):
+    """Property 4: Continue when no stop conditions met.
+    
+    For any graph state where probability gap <= 15%, question_useful is True,
+    and refinement_count < 5, the routing function should return "continue".
+    
+    Note: We use gap <= 14% to stay safely below the 15% threshold and avoid
+    floating point boundary issues at exactly 15%.
+    """
+    # Calculate second_prob ensuring gap < 15%
+    second_prob = max(0.0, top_prob - gap)
+    
+    diagnoses = [
+        Diagnosis(
+            condition="Condition A",
+            probability=top_prob,
+            reasoning="Top condition",
+            severity="moderate"
+        ),
+        Diagnosis(
+            condition="Condition B",
+            probability=second_prob,
+            reasoning="Second condition",
+            severity="moderate"
+        ),
+    ]
+    
+    # Create a refinement question with question_useful=True
+    question_useful = RefinementQuestion(
+        question="Test question?",
+        purpose="To differentiate conditions",
+        options=["Option 1", "Option 2"],
+        question_useful=True,
+    )
+    
+    state = create_test_state_with_question(
+        refinement_count=refinement_count,
+        diagnoses=diagnoses,
+        current_refinement_question=question_useful,
+    )
+    
+    result = should_continue_refinement(state)
+    
+    # Should return "continue" because no stop conditions are met
+    assert result == "continue", \
+        f"Expected 'continue' when gap={gap:.2%} < 15%, question_useful=True, count={refinement_count} < 5, got '{result}'"
+
+
+# ============== PROPERTY TESTS FOR DIFFERENTIAL DIAGNOSIS PROBABILITIES ==============
+
+# **Feature: enhanced-diagnostic-reasoning, Property 7: All diagnoses have probability values**
+# *For any* DifferentialDiagnosis, every diagnosis in the differential list should have
+# a probability value between 0.0 and 1.0
+# **Validates: Requirements 1.2**
+
+@settings(max_examples=100)
+@given(
+    diagnoses=st.lists(diagnosis_strategy, min_size=1, max_size=10),
+    disclaimer=non_empty_str,
+)
+def test_property_7_all_diagnoses_have_probability_values(
+    diagnoses: list[Diagnosis],
+    disclaimer: str,
+):
+    """Property 7: All diagnoses have probability values.
+    
+    For any DifferentialDiagnosis, every diagnosis in the differential list
+    should have a probability value between 0.0 and 1.0.
+    
+    **Feature: enhanced-diagnostic-reasoning, Property 7: All diagnoses have probability values**
+    **Validates: Requirements 1.2**
+    """
+    ddx = DifferentialDiagnosis(differential=diagnoses, disclaimer=disclaimer)
+    
+    # Verify every diagnosis has a probability value in valid range
+    for i, diagnosis in enumerate(ddx.differential):
+        # Probability must exist (not None)
+        assert diagnosis.probability is not None, \
+            f"Diagnosis {i} ({diagnosis.condition}) must have a probability value"
+        
+        # Probability must be a float
+        assert isinstance(diagnosis.probability, (int, float)), \
+            f"Diagnosis {i} ({diagnosis.condition}) probability must be numeric, got {type(diagnosis.probability)}"
+        
+        # Probability must be in valid range [0.0, 1.0]
+        assert 0.0 <= diagnosis.probability <= 1.0, \
+            f"Diagnosis {i} ({diagnosis.condition}) probability {diagnosis.probability} must be in [0.0, 1.0]"
+
+
+# ============== PROPERTY TESTS FOR FINAL SUMMARY DISCLAIMER ==============
+
+# **Feature: enhanced-diagnostic-reasoning, Property 8: Final summary includes disclaimer**
+# *For any* FinalSummary, the disclaimer field should be non-empty
+# **Validates: Requirements 6.4**
+
+@settings(max_examples=100)
+@given(final_summary_strategy)
+def test_property_8_final_summary_includes_disclaimer(summary: FinalSummary):
+    """Property 8: Final summary includes disclaimer.
+    
+    For any FinalSummary, the disclaimer field should be non-empty.
+    This ensures that every final summary presented to users includes
+    the required medical disclaimer.
+    
+    **Feature: enhanced-diagnostic-reasoning, Property 8: Final summary includes disclaimer**
+    **Validates: Requirements 6.4**
+    """
+    # Disclaimer field must exist and be non-empty
+    assert summary.disclaimer is not None, \
+        "FinalSummary must have a disclaimer field"
+    
+    assert isinstance(summary.disclaimer, str), \
+        f"Disclaimer must be a string, got {type(summary.disclaimer)}"
+    
+    assert summary.disclaimer.strip(), \
+        "FinalSummary disclaimer must be non-empty"

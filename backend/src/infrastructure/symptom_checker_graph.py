@@ -108,6 +108,19 @@ Consider:
 - Common conditions that match the symptom pattern
 - Any red flags that suggest urgent conditions
 
+TOP THREE FOCUS:
+Focus your analysis primarily on the top 3 most likely conditions. For these top conditions:
+- Provide detailed reasoning for each
+- Explain what distinguishes them from each other
+- Note any key differentiating features from the patient's history
+
+PROBABILITY GAP ANALYSIS:
+After ranking conditions, explicitly analyze the probability gaps:
+- Calculate the gap between the #1 and #2 diagnoses
+- Note if the top diagnosis "clearly stands out" (gap > 15 percentage points)
+- If the top diagnosis stands out, explain why it is significantly more likely than alternatives
+- If diagnoses are close in probability, note this uncertainty
+
 For each condition, provide:
 - Probability (0.0 to 1.0)
 - Reasoning for why this condition is considered
@@ -132,8 +145,47 @@ If the answer is unclear or ambiguous, extract what you can and note the uncerta
 """
 
 REFINEMENT_QUESTION_PROMPT = """You are a medical diagnostic assistant. Based on the current 
-differential diagnosis and all information collected so far, generate ONE follow-up question 
-that will help narrow down between the top conditions.
+differential diagnosis and all information collected so far, follow this THREE-STEP reasoning 
+process to determine whether to generate a follow-up question.
+
+## STEP 1: PROBABILITY GAP ANALYSIS
+
+First, analyze the probability gaps between the top diagnoses:
+- Calculate the gap between the #1 and #2 diagnoses
+- If the top diagnosis probability exceeds the second by MORE than 15 percentage points, 
+  the top diagnosis "clearly stands out" - no further questions are needed
+- If diagnoses are close in probability (gap ≤ 15%), proceed to Step 2
+
+## STEP 2: QUESTION UTILITY ANALYSIS
+
+When the top diagnoses are close in probability, determine if a HISTORY question can help:
+- Consider: Can asking about symptoms, timing, characteristics, or history meaningfully 
+  differentiate between the top conditions?
+- Some conditions can ONLY be distinguished by:
+  - Laboratory tests (blood work, cultures, etc.)
+  - Imaging studies (X-ray, CT, MRI, ultrasound)
+  - Physical examination findings
+  - Specialized diagnostic procedures
+
+If NO history question can meaningfully differentiate the top conditions:
+- Set `question_useful` to `false`
+- In the `purpose` field, explain what WOULD help differentiate (e.g., "Blood test needed 
+  to distinguish bacterial vs viral infection" or "Chest X-ray required to differentiate 
+  pneumonia from bronchitis")
+- Still provide a placeholder question and options (they won't be used)
+
+If a history question CAN help, proceed to Step 3.
+
+## STEP 3: MAXIMUM DISCRIMINATION QUESTION SELECTION
+
+When generating a question, select the ONE question that would create MAXIMUM probability 
+separation between the top diagnoses:
+
+- Identify which specific feature or symptom characteristic would most strongly differentiate 
+  between the top 2-3 conditions
+- Explain which conditions the question differentiates between
+- Describe how each answer option would shift the probabilities
+- Select the question with the highest expected information gain
 
 The question should:
 - Target differentiation between the most likely conditions
@@ -142,7 +194,15 @@ The question should:
 - NOT repeat any previously asked questions
 - Help rule in or rule out specific conditions
 
-For the question, also provide 2-4 contextually relevant answer options.
+For the question, provide 2-4 contextually relevant answer options.
+
+## OUTPUT REQUIREMENTS
+
+- Set `question_useful` to `true` if a history question can help differentiate
+- Set `question_useful` to `false` if tests, imaging, or physical exam are needed instead
+- Always populate the `purpose` field:
+  - If question_useful=true: explain why this question helps narrow down the diagnosis
+  - If question_useful=false: explain what would help differentiate (tests, imaging, etc.)
 """
 
 FINAL_SUMMARY_PROMPT = """You are a medical assistant providing a patient-friendly summary.
@@ -152,6 +212,35 @@ Based on all the information collected and the final differential diagnosis, pro
 2. The probability of this diagnosis
 3. A clear, patient-friendly explanation of what this means and recommended next steps
 4. An appropriate medical disclaimer
+
+## UNCERTAINTY ACKNOWLEDGMENT
+
+When presenting your summary, consider the probability gap between the top diagnoses:
+
+**If the top diagnosis clearly stands out (gap > 15% from second diagnosis):**
+- Present the top diagnosis with appropriate confidence
+- Explain why this diagnosis is significantly more likely than alternatives
+- Focus recommendations on this primary condition
+
+**If diagnoses remain close in probability (gap ≤ 15%):**
+- Acknowledge that multiple conditions remain similarly likely
+- Explain that the history-based assessment has limitations in distinguishing between them
+- List the top 2-3 conditions that are still being considered
+
+## TEST/IMAGING RECOMMENDATIONS
+
+If the refinement process identified that tests, imaging, or physical examination are needed 
+to differentiate between conditions:
+- Include specific recommendations for what tests or imaging would help clarify the diagnosis
+- Explain what each recommended test would help determine
+- Prioritize recommendations based on clinical relevance
+
+## CONFIDENCE PRESENTATION
+
+Present your confidence level appropriately:
+- High confidence (top diagnosis > 60% AND gap > 15%): "Based on your symptoms, [condition] is the most likely diagnosis"
+- Moderate confidence (top diagnosis 40-60% OR gap 10-15%): "Your symptoms are most consistent with [condition], though other possibilities exist"
+- Lower confidence (top diagnosis < 40% OR gap < 10%): "Several conditions could explain your symptoms, with [condition] being somewhat more likely"
 
 Be empathetic and clear. Avoid medical jargon where possible.
 """
@@ -469,8 +558,9 @@ def should_continue_refinement(state: SymptomCheckerState) -> str:
     Routing function: Determine whether to continue the refinement loop.
     
     Stop conditions (return "end"):
-    1. Life-threatening probability sum < 0.10 AND top diagnosis probability > 0.50
-    2. Refinement count >= 5 (max iterations)
+    1. Refinement count >= 5 (max iterations) - Requirement 5.3
+    2. question_useful is False (tests/imaging needed) - Requirement 5.1
+    3. Probability gap > 15% between top two diagnoses - Requirement 5.2
     
     Args:
         state: Current graph state
@@ -478,9 +568,14 @@ def should_continue_refinement(state: SymptomCheckerState) -> str:
     Returns:
         "continue" to ask another refinement question, "end" to generate final summary
     """
-    # Check max iterations first (Requirement 4.2)
+    # Check max iterations first (Requirement 5.3)
     refinement_count = state.get("refinement_count") or 0
     if refinement_count >= 5:
+        return "end"
+    
+    # Check if LLM determined no question is useful (Requirement 5.1)
+    current_question = state.get("current_refinement_question")
+    if current_question and not current_question.question_useful:
         return "end"
     
     # Get current DDX (use refined if available, otherwise initial)
@@ -489,18 +584,15 @@ def should_continue_refinement(state: SymptomCheckerState) -> str:
     if not current_ddx or not current_ddx.differential:
         return "end"
     
-    # Calculate life-threatening probability sum
-    life_threatening_sum = sum(
-        d.probability for d in current_ddx.differential
-        if d.severity == "life_threatening"
-    )
+    # Handle single diagnosis case - no gap to analyze
+    if len(current_ddx.differential) < 2:
+        return "end"
     
-    # Get top diagnosis probability
-    top_probability = current_ddx.differential[0].probability if current_ddx.differential else 0.0
-    
-    # Check confidence stop condition (Requirement 4.1)
-    # Stop if life-threatening < 10% AND top diagnosis > 50%
-    if life_threatening_sum < 0.10 and top_probability > 0.50:
+    # Check probability gap (Requirement 5.2)
+    # Stop if top diagnosis exceeds second by more than 15 percentage points
+    top_probability = current_ddx.differential[0].probability
+    second_probability = current_ddx.differential[1].probability
+    if top_probability - second_probability > 0.15:
         return "end"
     
     return "continue"
