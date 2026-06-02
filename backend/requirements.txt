@@ -9,7 +9,7 @@ langgraph==0.2.62
 langgraph-checkpoint==2.0.10
 langgraph-checkpoint-sqlite==2.0.6
 langchain-openai==0.2.14
-langchain-anthropic==0.2.8
+langchain-anthropic==0.2.4
 langchain-core==0.3.28
 aiosqlite==0.20.0
 
