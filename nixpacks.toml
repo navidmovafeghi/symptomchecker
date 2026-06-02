@@ -8,4 +8,4 @@ cmds = ["cd backend && pip install -r requirements.txt"]
 cmds = []
 
 [start]
-cmd = "cd backend && python -m uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"
+cmd = "cd backend && python start.py"
