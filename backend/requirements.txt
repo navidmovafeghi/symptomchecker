@@ -5,8 +5,9 @@ pydantic-settings==2.5.0
 python-dotenv==1.0.1
 
 # LangGraph dependencies for medical chatbot system
+# Using latest stable 0.2.x versions that work together
 langgraph==0.2.62
-langgraph-checkpoint==2.0.10
+langgraph-checkpoint==2.0.15
 langgraph-checkpoint-sqlite==2.0.6
 langchain-openai==0.2.14
 langchain-anthropic==0.2.4
