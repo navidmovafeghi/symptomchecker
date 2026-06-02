@@ -33,11 +33,17 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # CORS
-    origins = settings.cors_origins.split(",")
+    # CORS - handle both string with commas and single origin
+    cors_origins_str = settings.cors_origins.strip()
+    if cors_origins_str == "*":
+        origins = ["*"]
+    else:
+        # Split by comma and clean up each origin (remove trailing slashes)
+        origins = [origin.strip().rstrip('/') for origin in cors_origins_str.split(",") if origin.strip()]
+    
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=origins,
+        allow_origins=origins if origins else ["*"],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -48,11 +54,11 @@ def create_app() -> FastAPI:
 
     @app.get("/")
     async def root():
-        return {"message": "Chatbot API is running"}
+        return {"message": "Chatbot API is running", "status": "ok"}
 
     @app.get("/health")
     async def health():
-        return {"status": "healthy"}
+        return {"status": "healthy", "service": "symptom-checker-api"}
 
     return app
 
