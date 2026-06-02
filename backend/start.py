@@ -7,6 +7,17 @@ def main():
     """Start the uvicorn server with proper port configuration."""
     port = os.environ.get("PORT", "8000")
     
+    # Check required environment variables
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        print("ERROR: ANTHROPIC_API_KEY environment variable is not set!")
+        print("Please set it in Railway Dashboard -> Variables")
+        sys.exit(1)
+    
+    print(f"Starting server on port {port}")
+    print(f"ANTHROPIC_API_KEY: {'✓ Set' if os.environ.get('ANTHROPIC_API_KEY') else '✗ Missing'}")
+    print(f"CORS_ORIGINS: {os.environ.get('CORS_ORIGINS', 'Not set')}")
+    print(f"CHECKPOINT_DB_PATH: {os.environ.get('CHECKPOINT_DB_PATH', 'checkpoints.db')}")
+    
     # Import uvicorn
     try:
         import uvicorn
